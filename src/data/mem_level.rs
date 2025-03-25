@@ -17,7 +17,7 @@ impl Deref for MemLevel {
 }
 
 impl MemLevel {
-    pub const CAPACITY: u32 = 7454720;
+    pub const CAPACITY: u32 = 10;
 
     pub const fn new() -> Self {
         return Self { data: BTreeMap::new() }
@@ -53,6 +53,7 @@ impl MemLevel {
             if !block.push_command(command) {
                 tb.insert_block(&block);
                 block.clear();
+                block.push_command(command);
             }
         }
         if !block.is_empty() {
@@ -60,5 +61,9 @@ impl MemLevel {
         }
 
         tb.build()
+    }
+
+    pub fn clear(&mut self) {
+        self.data.clear();
     }
 }

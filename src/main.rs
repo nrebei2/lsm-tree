@@ -1,11 +1,12 @@
-use std::ops::Deref;
-
-use data::{mem_level::MemLevel, Database};
-
 mod data;
+use data::Database;
 
 fn main() {
-    let db = Database::new();
+    let mut db = Database::new();
 
-    println!("Hello, world!");
+    for key in 0..15 {
+        db.insert(key, key + 10);
+    }
+
+    println!("{:?}", db.get(10));    
 }

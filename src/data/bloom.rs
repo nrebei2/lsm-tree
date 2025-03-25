@@ -1,6 +1,8 @@
 use std::hash::{Hash, Hasher, RandomState, BuildHasher};
 use fixedbitset::FixedBitSet;
 
+
+#[derive(Debug, Default)]
 pub struct Bloom {
     inner: FixedBitSet,
     random_state: RandomState

@@ -1,27 +1,33 @@
-use std::iter::Peekable;
+use std::{cmp::Ordering, iter::Peekable};
 
-struct MergeIter<I1, I2>
+use super::table::Command;
+
+pub struct MergeCommands<I1, I2>
 where
-    I1: Iterator,
-    I2: Iterator<Item = I1::Item>,
-    I1::Item: Ord,
+    I1: Iterator<Item = Command>,
+    I2: Iterator<Item = Command>,
 {
     iter1: Peekable<I1>,
     iter2: Peekable<I2>,
 }
 
-impl<I1, I2> Iterator for MergeIter<I1, I2>
+impl<I1, I2> Iterator for MergeCommands<I1, I2>
 where
-    I1: Iterator,
-    I2: Iterator<Item = I1::Item>,
-    I1::Item: Ord,
+    I1: Iterator<Item = Command>,
+    I2: Iterator<Item = Command>,
 {
-    type Item = I1::Item;
+    type Item = Command;
 
     fn next(&mut self) -> Option<Self::Item> {
         match (self.iter1.peek(), self.iter2.peek()) {
-            (Some(&v1), Some(&v2)) if v1 <= v2 => self.iter1.next(),
-            (Some(_), Some(_)) => self.iter2.next(),
+            (Some(&v1), Some(&v2)) => match v1.key().cmp(&v2.key()) {
+                Ordering::Less => self.iter1.next(),
+                Ordering::Greater => self.iter2.next(),
+                Ordering::Equal => {
+                    self.iter2.next(); // ignore older command in iter2
+                    self.iter1.next()
+                }
+            },
             (Some(_), None) => self.iter1.next(),
             (None, Some(_)) => self.iter2.next(),
             (None, None) => None,
@@ -29,14 +35,13 @@ where
     }
 }
 
-fn merge_sorted<I1, I2>(iter1: I1, iter2: I2) -> MergeIter<I1::IntoIter, I2::IntoIter>
+pub fn merge_sorted_commands<I1, I2>(iter1: I1, iter2: I2) -> MergeCommands<I1, I2>
 where
-    I1: IntoIterator,
-    I2: IntoIterator<Item = I1::Item>,
-    I1::Item: Ord,
+    I1: Iterator<Item = Command>,
+    I2: Iterator<Item = Command>,
 {
-    MergeIter {
-        iter1: iter1.into_iter().peekable(),
-        iter2: iter2.into_iter().peekable(),
+    MergeCommands {
+        iter1: iter1.peekable(),
+        iter2: iter2.peekable(),
     }
 }

@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, path::{Path, PathBuf}};
 
-use super::{table::{BlockView, Command, Table}, GetResult};
+use super::{table::{Command, Table}, GetResult};
 
 pub struct DiskLevel {
     pub level: u32,
@@ -24,22 +24,9 @@ impl DiskLevel {
         }
     }
 
-    pub fn new_tmp(data_directory: &Path, level: u32) -> Self {
-        let mut level_directory = PathBuf::from(data_directory);
-        level_directory.push(format!("level{level}"));
-        level_directory.push("tmp");
-
-        Self {
-            level,
-            level_directory,
-            tables: vec![]
-        }
+    pub fn sort_tables(&mut self) {
+        self.tables.sort_by_key(|t| t.min_key);
     }
-
-    pub fn overwrite(&mut self, to: DiskLevel) {
-        assert_eq!(self.level, to.level);
-    }
-
 
     pub fn is_over_capacity(&self) -> bool {
         self.tables.len() > self.file_capacity()
@@ -83,21 +70,19 @@ impl DiskLevel {
         }; 
 
         // read block in table
-        let mut block_view = BlockView::new();
-        table.view().get_block_at(block_num, &mut block_view);
-        for command in block_view.iter() {
-            if command.key() > key {
-                // block is sorted, break early
-                break;
-            }
+        // for command in table.view().get_block_at(block_num).iter() {
+        //     if command.key() > key {
+        //         // block is sorted, break early
+        //         break;
+        //     }
 
-            if command.key() == key {
-                match command {
-                    Command::Delete(..) => return GetResult::Deleted,
-                    Command::Put(_, val) => return GetResult::Value(val)
-                }
-            }
-        }
+        //     if command.key() == key {
+        //         match command {
+        //             Command::Delete(..) => return GetResult::Deleted,
+        //             Command::Put(_, val) => return GetResult::Value(val)
+        //         }
+        //     }
+        // }
 
         GetResult::NotFound
     }
