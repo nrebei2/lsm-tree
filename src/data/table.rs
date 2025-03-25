@@ -71,7 +71,7 @@ impl BlockMut {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Command {
     Delete(i32),
     Put(i32, i32),
@@ -146,39 +146,35 @@ impl TableBuilder {
 
     pub fn build(self) -> Table {
         let new_path = self.directory.join(format!(
-            "{}-{}",
+            "{}:{}",
             self.min_key.unwrap(),
             self.max_key.unwrap()
         ));
         fs::rename(&self.file_path, &new_path).unwrap();
 
-        // TODO: not really necessary
-        let metadata = fs::metadata(&new_path).unwrap();
-
         Table {
             directory: self.directory,
             min_key: self.min_key.unwrap(),
             max_key: self.max_key.unwrap(),
-            file_size: metadata.len(),
             bloom: self.bloom,
             index: self.index,
         }
     }
 }
 
+#[derive(Debug)]
 pub struct Table {
     pub directory: PathBuf,
     // file name = "{min_key}-{max_key}"
     pub min_key: i32,
     pub max_key: i32,
-    pub file_size: u64, // in bytes
     pub bloom: Bloom,
     pub index: Vec<(i32, i32)>, // min/max key for each block in file
 }
 
 impl Table {
-    pub fn view(&mut self) -> TableView {
-        TableView::new(self)
+    pub fn view(&self) -> TableView {
+        TableView::new(self.file_path())
     }
 
     pub fn intersects(&self, other: &Table) -> Ordering {
@@ -196,15 +192,61 @@ impl Table {
     }
 
     pub fn file_name(&self) -> String {
-        format!("{}-{}", self.min_key, self.max_key)
+        format!("{}:{}", self.min_key, self.max_key)
     }
 
-    pub fn rename(&self, to_dir: &Path) {
-        fs::rename(self.file_path(), to_dir.join(self.file_name())).unwrap();
+    pub fn rename(&mut self, to_dir: &Path) {
+        let old_file_path = self.file_path();
+        self.directory = to_dir.to_owned();
+        let new_file_path = self.file_path();
+        println!("Renaming {:?} to {:?}", old_file_path, new_file_path);
+        fs::rename(old_file_path, new_file_path).unwrap();
     }
 
-    pub fn delete_file(&self) {
-        fs::remove_file(self.file_path()).unwrap();
+    pub fn create_from_existing(file_path: &Path) -> Self {
+        let file_name = file_path.file_name().unwrap().to_str().unwrap();
+        let (min_key_str, max_key_str) = file_name
+            .split_once(':')
+            .expect("File name was tampered with...");
+
+        let min_key: i32 = min_key_str.parse().expect("File name was tampered with...");
+        let max_key: i32 = max_key_str.parse().expect("File name was tampered with...");
+
+        let directory = file_path.parent().unwrap().to_owned();
+
+        let mut bloom = Bloom::new(BLOOM_CAPACITY);
+
+        let file_len = fs::metadata(file_path).unwrap().len();
+        let block_count = file_len.div_ceil(4096);
+
+        let mut index = Vec::with_capacity(block_count as usize);
+
+        let table_view = TableView::new(file_path.to_path_buf());
+
+        for block_ptr in table_view {
+            let mut block_iter = unsafe { &*block_ptr }.iter();
+
+            let first = block_iter.next().unwrap();
+            let mut last = first;
+            bloom.put(first.key());
+
+            while let Some(command) = block_iter.next() {
+                last = command;
+                bloom.put(command.key());
+            }
+
+            index.push((first.key(), last.key()));
+        }
+
+        // TODO: maybe assert min_key = index.first.0, max_key = index.last.1 
+
+        Table {
+            directory,
+            min_key,
+            max_key,
+            bloom,
+            index,
+        }
     }
 }
 
@@ -259,64 +301,55 @@ impl<'a> Iterator for BlockViewIter<'a> {
     }
 }
 
-pub struct TableView<'a> {
-    pub table: &'a Table,
+pub struct TableView {
+    file_path: PathBuf,
     file: File,
     block_buf: BlockView,
     cur_block: usize,
 }
 
-impl<'a> TableView<'a> {
-    fn new(table: &'a Table) -> Self {
-        let file = File::open(table.file_path()).unwrap();
+impl TableView {
+    fn new(file_path: PathBuf) -> Self {
+        let file = File::open(&file_path).unwrap();
 
         Self {
-            table,
+            file_path,
             file,
             block_buf: BlockView::new(),
-            cur_block: 0
+            cur_block: 0,
         }
     }
 
-    pub fn get_block_at(&mut self, index: usize) -> &BlockView {
-        if index >= self.block_len() {
-            panic!("Out of bounds!");
-        }
-
+    pub fn get_block_at(&mut self, index: usize) -> Option<&BlockView> {
         let bytes_read = self
             .file
             .read_at(self.block_buf.as_mut_slice(), (index * 4096) as u64)
             .unwrap();
 
+        if bytes_read == 0 {
+            return None;
+        }
+
         if bytes_read < 4096 {
             // this must be the last page
-            assert_eq!(index, self.block_len() - 1);
-            assert_eq!(bytes_read, self.table.file_size as usize % 4096);
-
             // sentinel of 0xFF
             self.block_buf.as_mut_slice()[bytes_read] = 0xFF;
         }
 
-        &self.block_buf
+        Some(&self.block_buf)
     }
 
-    pub fn block_len(&self) -> usize {
-        self.table.index.len()
+    pub fn delete_file(&self) {
+        fs::remove_file(&self.file_path).unwrap();
     }
 }
 
-impl<'a> Iterator for TableView<'a> {
+impl Iterator for TableView {
     type Item = *const BlockView;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.cur_block > self.block_len() {
-            self.table.delete_file();
-            return None;
-        }
-
-        let block_view = self.get_block_at(self.cur_block) as *const BlockView;
         self.cur_block += 1;
-
-        Some(block_view)
+        self.get_block_at(self.cur_block - 1)
+            .map(|b| b as *const BlockView)
     }
 }

@@ -57,7 +57,7 @@ impl Database {
     }
 
     fn check_mem_overflow(&mut self) {
-        if self.memory.len() > MemLevel::CAPACITY as usize {
+        if self.memory.len() >= MemLevel::CAPACITY as usize {
             let l0_table = self
                 .memory
                 .write_to_table(self.data_directory.join("level0").as_path());
@@ -70,7 +70,7 @@ impl Database {
                 let (left, right) = self.disk.split_at_mut(i + 1);
                 merge(&mut left[i].tables, &mut right[0]);
             } else {
-                break
+                break;
             }
         }
 
@@ -113,10 +113,10 @@ pub fn merge(l1: &mut Vec<Table>, l2: &mut DiskLevel) {
             let mut block = BlockMut::new();
             let mut new_tables = vec![];
 
-            for group in groups {
+            for group in groups.iter() {
                 let (slice_start, slice_end) = group.tables1;
                 let l1_commands = (&mut l1[slice_start..slice_end]).iter_mut().flat_map(|t| {
-                    (t.view().once_done(|v| v.table.delete_file()))
+                    (t.view().once_done(|v| v.delete_file()))
                         .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
                 });
 
@@ -124,7 +124,7 @@ pub fn merge(l1: &mut Vec<Table>, l2: &mut DiskLevel) {
                 let l2_commands = (&mut l2.tables[slice_start..slice_end])
                     .iter_mut()
                     .flat_map(|t| {
-                        (t.view().once_done(|v| v.table.delete_file()))
+                        (t.view().once_done(|v| v.delete_file()))
                             .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
                     });
 
@@ -152,6 +152,15 @@ pub fn merge(l1: &mut Vec<Table>, l2: &mut DiskLevel) {
                     new_tables.push(tb.build());
                 }
             }
+
+            for idx in groups.iter().flat_map(|g| g.tables1.0..g.tables1.1).rev() {
+                l1.remove(idx);
+            }
+
+            for idx in groups.iter().flat_map(|g| g.tables2.0..g.tables2.1).rev() {
+                l2.tables.remove(idx);
+            }
+
             l2.tables.append(&mut new_tables);
         }
     }
