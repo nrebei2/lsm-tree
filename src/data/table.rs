@@ -1,6 +1,7 @@
+use crate::config::{BLOOM_CAPACITY, MAX_FILE_SIZE_BLOCKS};
+
 use super::bloom::Bloom;
-use super::disk_level::DiskLevel;
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::os::unix::fs::FileExt;
@@ -8,12 +9,8 @@ use std::{
     fs::{self, File},
     io::{Cursor, Write},
     path::{Path, PathBuf},
-    time::{Instant, SystemTime},
+    time::SystemTime,
 };
-
-pub const MAX_FILE_SIZE_BYTES: usize = 1 << 28; // 64 MB
-pub const MAX_FILE_SIZE_BLOCKS: usize = MAX_FILE_SIZE_BYTES >> 12; // 64 MB
-pub const BLOOM_CAPACITY: usize = 1 << 16; // 64 MB
 
 pub struct BlockMut {
     pub commands: BytesMut,
@@ -238,7 +235,7 @@ impl Table {
             index.push((first.key(), last.key()));
         }
 
-        // TODO: maybe assert min_key = index.first.0, max_key = index.last.1 
+        // TODO: maybe assert min_key = index.first.0, max_key = index.last.1
 
         Table {
             directory,

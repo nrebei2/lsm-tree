@@ -1,13 +1,13 @@
-use std::{
-    cmp::Ordering,
-    path::{Path, PathBuf},
-};
+use std::{cmp::Ordering, ops::DerefMut, path::PathBuf};
 
 use disk_level::DiskLevel;
 use mem_level::MemLevel;
 use merge_iter::merge_sorted_commands;
 use once_done::OnceDoneTrait;
 use table::{BlockMut, Table, TableBuilder};
+use tokio::sync::RwLock;
+
+use crate::config::{MEM_CAPACITY, NUM_LEVELS};
 
 pub mod bloom;
 pub mod disk_level;
@@ -15,9 +15,6 @@ pub mod mem_level;
 pub mod merge_iter;
 pub mod once_done;
 pub mod table;
-
-const NUM_LEVELS: usize = 6;
-const DATABASE_DIRECTORY: &'static str = "/Users/noahr/dev/rust/lsm-tree/database";
 
 pub enum GetResult {
     NotFound,
@@ -27,67 +24,74 @@ pub enum GetResult {
 
 pub struct Database {
     data_directory: PathBuf,
-    memory: MemLevel,
-    disk: [DiskLevel; NUM_LEVELS],
+    memory: RwLock<MemLevel>,
+    disk: [RwLock<DiskLevel>; NUM_LEVELS],
 }
 
 impl Database {
-    pub fn new() -> Self {
-        let data_directory = PathBuf::from(DATABASE_DIRECTORY);
-
+    pub fn new(data_directory: PathBuf) -> Self {
         let memory = MemLevel::new();
-        let disk: [DiskLevel; NUM_LEVELS] =
-            std::array::from_fn(|idx| DiskLevel::new(&data_directory, (idx + 1) as u32));
+        let disk: [RwLock<DiskLevel>; NUM_LEVELS] =
+            std::array::from_fn(|idx| RwLock::new(DiskLevel::new(&data_directory, (idx + 1) as u32)));
 
         Self {
             data_directory,
-            memory,
+            memory: RwLock::new(memory),
             disk,
         }
     }
 
-    pub fn insert(&mut self, key: i32, value: i32) {
-        self.memory.insert(key, value);
-        self.check_mem_overflow();
-    }
+    pub async fn insert(&self, key: i32, value: i32) {
+        let mut mem_write = self.memory.write().await;
+        mem_write.insert(key, value);
 
-    pub fn delete(&mut self, key: i32) {
-        self.memory.delete(key);
-        self.check_mem_overflow();
-    }
-
-    fn check_mem_overflow(&mut self) {
-        if self.memory.len() >= MemLevel::CAPACITY as usize {
-            let l0_table = self
-                .memory
-                .write_to_table(self.data_directory.join("level0").as_path());
-            merge(&mut vec![l0_table], &mut self.disk[0]);
-            self.memory.clear();
+        if mem_write.len() >= MEM_CAPACITY as usize {
+            let old_mem = mem_write.clear();
+            self.handle_overflow(old_mem).await;
         }
+        
+    }
+
+    pub async fn delete(&self, key: i32) {
+        let mut mem_write = self.memory.write().await;
+        mem_write.delete(key);
+        if mem_write.len() >= MEM_CAPACITY as usize {
+            let old_mem = mem_write.clear();
+            self.handle_overflow(old_mem).await;
+        }
+    }
+
+    async fn handle_overflow(&self, mem: MemLevel) {
+        let l0_table = mem
+            .write_to_table(self.data_directory.join("level0").as_path());  
+
+        let mut cur = self.disk[0].write().await;
+        merge(&mut vec![l0_table], cur.deref_mut());
 
         for i in 0..(NUM_LEVELS - 1) {
-            if self.disk[i].is_over_capacity() {
-                let (left, right) = self.disk.split_at_mut(i + 1);
-                merge(&mut left[i].tables, &mut right[0]);
+            if cur.is_over_capacity() {
+                let mut next = self.disk[i+1].write().await;
+                merge(&mut cur.tables, next.deref_mut());
+                cur = next;
             } else {
                 break;
             }
         }
 
-        if self.disk[NUM_LEVELS - 1].is_over_capacity() {
+        if cur.is_over_capacity() {
             eprintln!("Final level is over capacity!");
         }
     }
 
-    pub fn get(&self, key: i32) -> Option<i32> {
-        match self.memory.get(key) {
+    pub async fn get(&self, key: i32) -> Option<i32> {
+        match self.memory.read().await.get(key) {
             GetResult::Deleted => return None,
             GetResult::Value(val) => return Some(val),
             GetResult::NotFound => {}
         };
 
         for i in 0..NUM_LEVELS {
-            match self.disk[i].get(key) {
+            match self.disk[i].read().await.get(key) {
                 GetResult::Deleted => return None,
                 GetResult::Value(val) => return Some(val),
                 GetResult::NotFound => {}

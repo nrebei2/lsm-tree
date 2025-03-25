@@ -1,17 +1,24 @@
-use std::{cmp::Ordering, fs, path::{Path, PathBuf}};
+use std::{
+    cmp::Ordering,
+    fs,
+    path::{Path, PathBuf},
+};
 
-use super::{table::{Command, Table}, GetResult};
+use crate::config::SIZE_MULTIPLIER;
+
+use super::{
+    table::{Command, Table},
+    GetResult,
+};
 
 #[derive(Debug)]
 pub struct DiskLevel {
     pub level: u32,
     pub level_directory: PathBuf,
-    pub tables: Vec<Table> // sorted array
+    pub tables: Vec<Table>, // sorted array
 }
 
 impl DiskLevel {
-    pub const SIZE_MULTIPLIER: usize = 2;
-
     pub fn new(data_directory: &Path, level: u32) -> Self {
         let mut level_directory = PathBuf::from(data_directory);
         level_directory.push(format!("level{level}"));
@@ -28,7 +35,7 @@ impl DiskLevel {
         let mut res = Self {
             level,
             level_directory,
-            tables
+            tables,
         };
         res.sort_tables();
         res
@@ -43,10 +50,10 @@ impl DiskLevel {
     }
 
     fn file_capacity(&self) -> usize {
-        4 * usize::pow(Self::SIZE_MULTIPLIER, self.level-1)
+        4 * usize::pow(SIZE_MULTIPLIER, self.level - 1)
     }
 
-    pub fn get(&self, key: i32) -> GetResult { 
+    pub fn get(&self, key: i32) -> GetResult {
         // dbg!("Looking for key", key);
         // dbg!(self);
 
@@ -61,7 +68,7 @@ impl DiskLevel {
             }
         }) {
             Ok(idx) => &self.tables[idx],
-            _ => return GetResult::NotFound
+            _ => return GetResult::NotFound,
         };
 
         // find block in table
@@ -79,8 +86,8 @@ impl DiskLevel {
             }
         }) {
             Ok(idx) => idx,
-            _ => return GetResult::NotFound
-        }; 
+            _ => return GetResult::NotFound,
+        };
 
         // read block in table
         for command in table.view().get_block_at(block_num).unwrap().iter() {
@@ -92,7 +99,7 @@ impl DiskLevel {
             if command.key() == key {
                 match command {
                     Command::Delete(..) => return GetResult::Deleted,
-                    Command::Put(_, val) => return GetResult::Value(val)
+                    Command::Put(_, val) => return GetResult::Value(val),
                 }
             }
         }

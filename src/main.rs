@@ -1,34 +1,57 @@
 mod data;
-use std::collections::HashMap;
+use std::{net::SocketAddr, sync::Arc};
 
+use command::read_command;
+use config::Config;
 use data::Database;
-use rand::{distr::{Distribution, Uniform}, Rng};
+use tokio::{
+    io::{AsyncWriteExt, BufReader},
+    net::{TcpListener, TcpStream},
+};
 
+mod command;
+mod config;
 
-fn main() {
-    let mut db = Database::new();
-    // let mut db_mock = HashMap::new();
+#[tokio::main]
+async fn main() {
+    let config = Config::parse_from_args();
+    let db = Arc::new(Database::new(config.data_dir));
 
-    // let range = -100_000..500_000;
+    let listener = TcpListener::bind(("127.0.0.1", config.port)).await.unwrap();
 
-    // let between = Uniform::try_from(range.clone()).unwrap();
-    // let mut rng = rand::rng();
-    // for _ in 0..range.len()/2 {
-    //     if rng.random_bool(0.1) {
-    //         let key = between.sample(&mut rng);
-    //         db.delete(key);
-    //         db_mock.remove(&key);
-    //     } else {
-    //         let key = between.sample(&mut rng);
-    //         let val = between.sample(&mut rng);
-    //         db.insert(key, val);
-    //         db_mock.insert(key, val);
-    //     }
-    // }
+    loop {
+        let (stream, client) = listener.accept().await.unwrap();
 
-    // for key in range {
-    //     assert_eq!(db.get(key), db_mock.get(&key).cloned());  
-    // }
+        let db_clone = db.clone();
+        tokio::spawn(async move {
+            println!("New connection with {:?}", client);
+            handle_connection(stream, client, db_clone).await;
+            println!("Closed connection with {:?}", client);
+        });
+    }
+}
 
-    assert_eq!(db.get(-99_998), None)
+async fn handle_connection(stream: TcpStream, addr: SocketAddr, db: Arc<Database>) {
+    let (read, mut write) = stream.into_split();
+    let mut buf_read = BufReader::new(read);
+
+    let mut out_buf = String::new();
+    loop {
+        let command = if let Ok(command) = read_command(&mut buf_read).await {
+            command
+        } else {
+            break;
+        };
+
+        println!("Received command {:?} from {:?}", command, addr);
+        command.execute(&db, &mut out_buf).await;
+
+        let mut bytes = out_buf.into_bytes();
+        // delimiter
+        bytes.push(0x00);
+        write.write_all(&bytes).await.unwrap();
+
+        bytes.clear();
+        out_buf = unsafe { String::from_utf8_unchecked(bytes) };
+    }
 }

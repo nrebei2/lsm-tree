@@ -1,6 +1,6 @@
 pub struct OnceDone<I: Iterator, F: FnMut(&mut I)> {
     fun: F,
-    iter: I
+    iter: I,
 }
 
 impl<I: Iterator, F: FnMut(&mut I)> Iterator for OnceDone<I, F> {
@@ -12,7 +12,7 @@ impl<I: Iterator, F: FnMut(&mut I)> Iterator for OnceDone<I, F> {
                 (self.fun)(&mut self.iter);
                 None
             }
-            Some(v) => Some(v)
+            Some(v) => Some(v),
         }
     }
 }
