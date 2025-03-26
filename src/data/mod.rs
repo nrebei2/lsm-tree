@@ -68,7 +68,7 @@ impl Database {
         merge(&mut vec![l0_table], cur.deref_mut());
 
         for i in 0..(NUM_LEVELS - 1) {
-            if cur.is_over_capacity() {
+            if cur.is_over_file_capacity() {
                 let mut next = self.disk[i+1].write().await;
                 merge(&mut cur.tables, next.deref_mut());
                 cur = next;
@@ -77,7 +77,7 @@ impl Database {
             }
         }
 
-        if cur.is_over_capacity() {
+        if cur.is_over_file_capacity() {
             eprintln!("Final level is over capacity!");
         }
     }

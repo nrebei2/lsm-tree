@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::config::SIZE_MULTIPLIER;
+use crate::config::{MAX_FILE_SIZE_BYTES, SIZE_MULTIPLIER};
 
 use super::{
     table::{Command, Table},
@@ -45,7 +45,7 @@ impl DiskLevel {
         self.tables.sort_by_key(|t| t.min_key);
     }
 
-    pub fn is_over_capacity(&self) -> bool {
+    pub fn is_over_file_capacity(&self) -> bool {
         self.tables.len() > self.file_capacity()
     }
 
@@ -53,10 +53,15 @@ impl DiskLevel {
         4 * usize::pow(SIZE_MULTIPLIER, self.level - 1)
     }
 
-    pub fn get(&self, key: i32) -> GetResult {
-        // dbg!("Looking for key", key);
-        // dbg!(self);
+    pub fn average_table_utilization(&self) -> f32 {
+        self.tables
+            .iter()
+            .map(|t| t.file_size as f32 / MAX_FILE_SIZE_BYTES as f32)
+            .sum::<f32>()
+            / self.tables.len() as f32
+    }
 
+    pub fn get(&self, key: i32) -> GetResult {
         // find table
         let table = match self.tables.binary_search_by(|t| {
             if key >= t.min_key && key <= t.max_key {

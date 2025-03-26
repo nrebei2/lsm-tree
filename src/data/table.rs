@@ -147,10 +147,13 @@ impl TableBuilder {
         ));
         fs::rename(&self.file_path, &new_path).unwrap();
 
+        let file_size = fs::metadata(&new_path).unwrap().len();
+
         Table {
             directory: self.directory,
             min_key: self.min_key.unwrap(),
             max_key: self.max_key.unwrap(),
+            file_size,
             bloom: self.bloom,
             index: self.index,
         }
@@ -163,6 +166,7 @@ pub struct Table {
     // file name = "{min_key}-{max_key}"
     pub min_key: i32,
     pub max_key: i32,
+    pub file_size: u64,
     pub bloom: Bloom,
     pub index: Vec<(i32, i32)>, // min/max key for each block in file
 }
@@ -211,8 +215,8 @@ impl Table {
 
         let mut bloom = Bloom::new(BLOOM_CAPACITY);
 
-        let file_len = fs::metadata(file_path).unwrap().len();
-        let block_count = file_len.div_ceil(BLOCK_SIZE_BYTES as u64);
+        let file_size = fs::metadata(file_path).unwrap().len();
+        let block_count = file_size.div_ceil(BLOCK_SIZE_BYTES as u64);
 
         let mut index = Vec::with_capacity(block_count as usize);
 
@@ -233,12 +237,11 @@ impl Table {
             index.push((first.key(), last.key()));
         }
 
-        // TODO: maybe assert min_key = index.first.0, max_key = index.last.1
-
         Table {
             directory,
             min_key,
             max_key,
+            file_size,
             bloom,
             index,
         }
