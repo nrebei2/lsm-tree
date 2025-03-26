@@ -1,4 +1,8 @@
-use std::{fs::{self, metadata}, io::Read, path::PathBuf};
+use std::{
+    fs::{self, metadata},
+    io::Read,
+    path::PathBuf,
+};
 
 use bytes::BufMut;
 
@@ -7,8 +11,9 @@ pub enum Command {
     PUT { key: i32, val: i32 },
     GET { key: i32 },
     DELETE { key: i32 },
-    LOAD { file: PathBuf }
-    // TODO: range, stats
+    LOAD { file: PathBuf },
+    RANGE { min_key: i32, max_key: i32 },
+     // TODO: stats
 }
 
 impl Command {
@@ -36,6 +41,11 @@ impl Command {
                 buf.put_u64(kv_pairs);
                 fs::File::open(file).unwrap().read_to_end(buf).unwrap();
             }
+            Self::RANGE { min_key, max_key } => {
+                buf.put_u8(b'r');
+                buf.put_i32(*min_key);
+                buf.put_i32(*max_key);
+            }
         }
     }
 
@@ -61,10 +71,15 @@ impl Command {
                 let file: PathBuf = split_iter.next()?.parse().ok()?;
 
                 if !file.is_file() {
-                    return None
+                    return None;
                 }
 
                 Some(Command::LOAD { file })
+            }
+            "r" => {
+                let min_key: i32 = split_iter.next()?.parse().ok()?;
+                let max_key: i32 = split_iter.next()?.parse().ok()?;
+                Some(Command::RANGE { min_key, max_key })
             }
             _ => None,
         }

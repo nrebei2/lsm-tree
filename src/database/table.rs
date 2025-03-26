@@ -77,8 +77,15 @@ pub enum Command {
 impl Command {
     pub fn key(&self) -> i32 {
         match self {
-            Self::Delete(key) => *key,
-            Self::Put(key, ..) => *key,
+            &Self::Delete(key) => key,
+            &Self::Put(key, ..) => key,
+        }
+    }
+
+    pub fn value(&self) -> Option<i32> {
+        match self {
+            Self::Delete(key) => None,
+            &Self::Put(_, val) => Some(val),
         }
     }
 }
@@ -173,7 +180,11 @@ pub struct Table {
 
 impl Table {
     pub fn view(&self) -> TableView {
-        TableView::new(self.file_path())
+        TableView::new(self.file_path(), 0)
+    }
+
+    pub fn view_from(&self, block_index: usize) -> TableView {
+        TableView::new(self.file_path(), block_index)
     }
 
     pub fn intersects(&self, other: &Table) -> Ordering {
@@ -220,7 +231,7 @@ impl Table {
 
         let mut index = Vec::with_capacity(block_count as usize);
 
-        let table_view = TableView::new(file_path.to_path_buf());
+        let table_view = TableView::new(file_path.to_path_buf(), 0);
 
         for block_ptr in table_view {
             let mut block_iter = unsafe { &*block_ptr }.iter();
@@ -254,7 +265,9 @@ pub struct BlockView {
 
 impl BlockView {
     pub fn new() -> Self {
-        Self { buf: [0xFF; BLOCK_SIZE_BYTES] }
+        Self {
+            buf: [0xFF; BLOCK_SIZE_BYTES],
+        }
     }
 
     fn as_mut_slice(&mut self) -> &mut [u8] {
@@ -307,21 +320,24 @@ pub struct TableView {
 }
 
 impl TableView {
-    pub fn new(file_path: PathBuf) -> Self {
+    pub fn new(file_path: PathBuf, cur_block: usize) -> Self {
         let file = File::open(&file_path).unwrap();
 
         Self {
             file_path,
             file,
             block_buf: BlockView::new(),
-            cur_block: 0,
+            cur_block,
         }
     }
 
     pub fn get_block_at(&mut self, index: usize) -> Option<&BlockView> {
         let bytes_read = self
             .file
-            .read_at(self.block_buf.as_mut_slice(), (index * BLOCK_SIZE_BYTES) as u64)
+            .read_at(
+                self.block_buf.as_mut_slice(),
+                (index * BLOCK_SIZE_BYTES) as u64,
+            )
             .unwrap();
 
         if bytes_read == 0 {

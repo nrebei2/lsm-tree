@@ -28,7 +28,7 @@ impl MemLevel {
 
         if let Some(Ok(entry)) = fs::read_dir(&level_directory).unwrap().into_iter().next() {
             for command in
-                TableView::new(entry.path()).flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
+                TableView::new(entry.path(), 0).flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
             {
                 match command {
                     Command::Delete(key) => res.delete(key),

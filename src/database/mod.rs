@@ -1,4 +1,8 @@
-use std::{cmp::Ordering, path::{Path, PathBuf}};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use bytes::Buf;
 use disk_level::DiskLevel;
@@ -17,7 +21,7 @@ pub mod merge_iter;
 pub mod once_done;
 pub mod table;
 
-/// TODO: explain how I compact levels 
+/// TODO: explain how I compact levels
 
 pub enum GetResult {
     NotFound,
@@ -34,8 +38,9 @@ pub struct Database {
 impl Database {
     pub fn new(data_directory: PathBuf) -> Self {
         let memory = MemLevel::new(&data_directory);
-        let disk: [RwLock<DiskLevel>; NUM_LEVELS] =
-            std::array::from_fn(|idx| RwLock::new(DiskLevel::new(&data_directory, (idx + 1) as u32)));
+        let disk: [RwLock<DiskLevel>; NUM_LEVELS] = std::array::from_fn(|idx| {
+            RwLock::new(DiskLevel::new(&data_directory, (idx + 1) as u32))
+        });
 
         Self {
             data_directory,
@@ -52,7 +57,7 @@ impl Database {
             let old_mem = mem_write.clear();
             drop(mem_write);
             self.handle_overflow(old_mem).await;
-        } 
+        }
     }
 
     pub async fn load(&self, mut data: &[u8]) {
@@ -68,8 +73,8 @@ impl Database {
                 let old_mem = mem_write.clear();
                 drop(mem_write);
                 self.handle_overflow(old_mem).await;
-                mem_write = self.memory.write().await; 
-            } 
+                mem_write = self.memory.write().await;
+            }
         }
     }
 
@@ -84,8 +89,7 @@ impl Database {
     }
 
     async fn handle_overflow(&self, mem: MemLevel) {
-        let l0_table = mem
-            .write_to_table(self.data_directory.join("level0").as_path());  
+        let l0_table = mem.write_to_table(self.data_directory.join("level0").as_path());
 
         let mut cur = self.disk[0].write().await;
         merge(&mut vec![l0_table], &mut cur);
@@ -97,7 +101,7 @@ impl Database {
                     assert!(!cur.is_over_file_capacity());
                     break;
                 }
-                let mut next = self.disk[i+1].write().await;
+                let mut next = self.disk[i + 1].write().await;
                 merge(&mut cur.tables, &mut next);
                 cur = next;
             } else {
@@ -128,11 +132,66 @@ impl Database {
         None
     }
 
+    pub async fn range(
+        &self,
+        min_key: i32,
+        max_key: i32,
+    ) -> Option<impl Iterator<Item = (i32, i32)>> {
+        if min_key >= max_key {
+            return None;
+        }
+
+        let mut res: HashMap<i32, Option<i32>> = HashMap::new();
+
+        for (&key, &val) in self.memory.read().await.range(min_key..max_key) {
+            res.insert(key, val);
+        }
+
+        for i in 0..NUM_LEVELS {
+            let level = self.disk[i].read().await;
+
+            if level.tables.is_empty() {
+                continue;
+            }
+
+            if let Some(locate_min) = level.locate_nearest(min_key) {
+                let views = std::iter::once(
+                    level.tables[locate_min.table_index].view_from(locate_min.block_index),
+                )
+                .chain(
+                    (&level.tables.get(locate_min.table_index..).unwrap_or(&[]))
+                        .iter()
+                        .map(|t| t.view()),
+                );
+
+                for command in
+                    views.flat_map(|view| view.flat_map(|b| unsafe { b.as_ref().unwrap().iter() }))
+                {
+                    if command.key() < min_key {
+                        continue;
+                    }
+
+                    if command.key() >= max_key {
+                        break;
+                    }
+
+                    res.entry(command.key()).or_insert(command.value());
+                }
+            }
+        }
+
+        if res.is_empty() {
+            None
+        } else {
+            Some(res.into_iter().filter_map(|(key, val)| Some((key, val?))))
+        }
+    }
+
     pub fn cleanup(self) {
         let mem = self.memory.into_inner();
 
         if !mem.is_empty() {
-            mem.write_to_table(self.data_directory.join("level0").as_path());  
+            mem.write_to_table(self.data_directory.join("level0").as_path());
         }
     }
 }
@@ -167,15 +226,19 @@ fn build_tables<I: Iterator<Item = Command>>(mut iter: I, to_dir: &Path) -> Vec<
 }
 
 fn compact_in_place(level: &mut DiskLevel) {
-    let first_partial_table = level.tables.iter().position(|t| t.file_size < MAX_FILE_SIZE_BYTES as u64).unwrap();
+    let first_partial_table = level
+        .tables
+        .iter()
+        .position(|t| t.file_size < MAX_FILE_SIZE_BYTES as u64)
+        .unwrap();
     let mut partial_tables = level.tables.split_off(first_partial_table);
 
     let commands = partial_tables.iter_mut().flat_map(|t| {
         (t.view().once_done(|v| v.delete_file()))
             .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
-    }); 
+    });
 
-    let mut new_tables= build_tables(commands, &level.level_directory);
+    let mut new_tables = build_tables(commands, &level.level_directory);
     level.tables.append(&mut new_tables);
 }
 

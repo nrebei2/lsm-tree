@@ -11,6 +11,11 @@ use super::{
     GetResult,
 };
 
+pub struct LocateResult {
+    pub table_index: usize,
+    pub block_index: usize,
+}
+
 #[derive(Debug)]
 pub struct DiskLevel {
     pub level: u32,
@@ -59,6 +64,51 @@ impl DiskLevel {
             .map(|t| t.file_size as f32 / MAX_FILE_SIZE_BYTES as f32)
             .sum::<f32>()
             / self.tables.len() as f32
+    }
+
+    pub fn locate_nearest(&self, key: i32) -> Option<LocateResult> {
+        let table_index = match self.tables.binary_search_by(|t| {
+            if key >= t.min_key && key <= t.max_key {
+                Ordering::Equal
+            } else if key < t.min_key {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }) {
+            Ok(idx) => idx,
+            Err(idx) => {
+                return if idx == self.tables.len() {
+                    None
+                } else {
+                    Some(LocateResult {
+                        table_index: idx,
+                        block_index: 0,
+                    })
+                }
+            }
+        };
+
+        let block_index =
+            match self.tables[table_index]
+                .index
+                .binary_search_by(|&(min_key, max_key)| {
+                    if key >= min_key && key <= max_key {
+                        Ordering::Equal
+                    } else if key < min_key {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Less
+                    }
+                }) {
+                Ok(idx) => idx,
+                Err(idx) => idx,
+            };
+
+        Some(LocateResult {
+            table_index,
+            block_index,
+        })
     }
 
     pub fn get(&self, key: i32) -> GetResult {

@@ -1,6 +1,7 @@
 use tokio::io;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
+use std::fmt::Write;
 
 use crate::database::Database;
 
@@ -9,8 +10,8 @@ pub enum Command {
     PUT { key: i32, val: i32 },
     GET { key: i32 },
     DELETE { key: i32 },
-    LOAD { data: Vec<u8> }
-    // TODO: range, stats
+    LOAD { data: Vec<u8> },
+    RANGE { min_key: i32, max_key: i32 }, // TODO: stats
 }
 
 impl Command {
@@ -32,6 +33,13 @@ impl Command {
             Self::LOAD { data } => {
                 db.load(&data).await;
                 out.push_str("OK");
+            }
+            Self::RANGE { min_key, max_key } => {
+                if let Some(iter) = db.range(min_key, max_key).await {
+                    for (key, val) in iter {
+                        write!(out, "{key}:{val} ").unwrap();
+                    }
+                }
             }
         }
     }
@@ -58,6 +66,11 @@ pub async fn read_command<T: AsyncBufReadExt + Unpin>(reader: &mut T) -> io::Res
 
             reader.read_exact(&mut buf).await?;
             Command::LOAD { data: buf }
+        }
+        b'r' => {
+            let min_key = reader.read_i32().await?;
+            let max_key = reader.read_i32().await?;
+            Command::RANGE { min_key, max_key }
         }
         x => todo!("Read {}", x as char),
     })
