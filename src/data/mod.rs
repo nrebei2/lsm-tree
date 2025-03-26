@@ -1,13 +1,13 @@
-use std::{cmp::Ordering, ops::DerefMut, path::PathBuf};
+use std::{cmp::Ordering, path::{Path, PathBuf}};
 
 use disk_level::DiskLevel;
 use mem_level::MemLevel;
 use merge_iter::merge_sorted_commands;
 use once_done::OnceDoneTrait;
-use table::{BlockMut, Table, TableBuilder};
+use table::{BlockMut, Command, Table, TableBuilder};
 use tokio::sync::RwLock;
 
-use crate::config::{MEM_CAPACITY, NUM_LEVELS};
+use crate::config::{MAX_FILE_SIZE_BYTES, MEM_CAPACITY, NUM_LEVELS};
 
 pub mod bloom;
 pub mod disk_level;
@@ -15,6 +15,8 @@ pub mod mem_level;
 pub mod merge_iter;
 pub mod once_done;
 pub mod table;
+
+/// TODO: explain how I compact levels 
 
 pub enum GetResult {
     NotFound,
@@ -65,12 +67,17 @@ impl Database {
             .write_to_table(self.data_directory.join("level0").as_path());  
 
         let mut cur = self.disk[0].write().await;
-        merge(&mut vec![l0_table], cur.deref_mut());
+        merge(&mut vec![l0_table], &mut cur);
 
         for i in 0..(NUM_LEVELS - 1) {
             if cur.is_over_file_capacity() {
+                if cur.average_table_utilization() <= 0.5 {
+                    compact_in_place(&mut cur);
+                    assert!(!cur.is_over_file_capacity());
+                    break;
+                }
                 let mut next = self.disk[i+1].write().await;
-                merge(&mut cur.tables, next.deref_mut());
+                merge(&mut cur.tables, &mut next);
                 cur = next;
             } else {
                 break;
@@ -78,7 +85,7 @@ impl Database {
         }
 
         if cur.is_over_file_capacity() {
-            eprintln!("Final level is over capacity!");
+            compact_in_place(&mut cur);
         }
     }
 
@@ -100,13 +107,55 @@ impl Database {
         None
     }
 
-    pub fn finalize(self) {
+    pub fn cleanup(self) {
         let mem = self.memory.into_inner();
         mem.write_to_table(self.data_directory.join("level0").as_path());  
     }
 }
 
-pub fn merge(l1: &mut Vec<Table>, l2: &mut DiskLevel) {
+fn build_tables<I: Iterator<Item = Command>>(mut iter: I, to_dir: &Path) -> Vec<Table> {
+    let mut block = BlockMut::new();
+    let mut new_tables = vec![];
+
+    let mut tb = TableBuilder::new(to_dir);
+    while let Some(command) = iter.next() {
+        if !block.push_command(command) {
+            tb.insert_block(&block);
+
+            if tb.full() {
+                let new_table = tb.build();
+                tb = TableBuilder::new(to_dir);
+                new_tables.push(new_table);
+            }
+            block.clear();
+            block.push_command(command);
+        }
+    }
+    if !block.is_empty() {
+        tb.insert_block(&block);
+        block.clear();
+    }
+    if !tb.is_empty() {
+        new_tables.push(tb.build());
+    }
+
+    new_tables
+}
+
+fn compact_in_place(level: &mut DiskLevel) {
+    let first_partial_table = level.tables.iter().position(|t| t.file_size < MAX_FILE_SIZE_BYTES as u64).unwrap();
+    let mut partial_tables = level.tables.split_off(first_partial_table);
+    
+    let commands = partial_tables.iter_mut().flat_map(|t| {
+        (t.view().once_done(|v| v.delete_file()))
+            .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
+    }); 
+
+    let mut new_tables= build_tables(commands, &level.level_directory);
+    level.tables.append(&mut new_tables);
+}
+
+fn merge(l1: &mut Vec<Table>, l2: &mut DiskLevel) {
     let intersections = find_intersections(l1, &l2.tables);
 
     match intersections {
@@ -118,7 +167,6 @@ pub fn merge(l1: &mut Vec<Table>, l2: &mut DiskLevel) {
             }
         }
         IntersectionResult::IntersectingGroups(groups) => {
-            let mut block = BlockMut::new();
             let mut new_tables = vec![];
 
             for group in groups.iter() {
@@ -136,29 +184,8 @@ pub fn merge(l1: &mut Vec<Table>, l2: &mut DiskLevel) {
                             .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
                     });
 
-                let mut merge_commands_iter = merge_sorted_commands(l1_commands, l2_commands);
-
-                let mut tb = TableBuilder::new(&l2.level_directory);
-                while let Some(command) = merge_commands_iter.next() {
-                    if !block.push_command(command) {
-                        tb.insert_block(&block);
-
-                        if tb.full() {
-                            let new_table = tb.build();
-                            tb = TableBuilder::new(&l2.level_directory);
-                            new_tables.push(new_table);
-                        }
-                        block.clear();
-                        block.push_command(command);
-                    }
-                }
-                if !block.is_empty() {
-                    tb.insert_block(&block);
-                    block.clear();
-                }
-                if !tb.is_empty() {
-                    new_tables.push(tb.build());
-                }
+                let merge_commands_iter = merge_sorted_commands(l1_commands, l2_commands);
+                new_tables.append(&mut build_tables(merge_commands_iter, &l2.level_directory));
             }
 
             for idx in groups.iter().flat_map(|g| g.tables1.0..g.tables1.1).rev() {

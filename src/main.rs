@@ -15,9 +15,13 @@ use tokio_util::task::TaskTracker;
 mod command;
 mod config;
 
+/// TODO: explain how I lock levels to support threading
+
 #[tokio::main]
 async fn main() {
     let config = Config::parse_from_args();
+
+    // TODO: could parallelize database creation since level initializations are independent
     let db = Arc::new(Database::new(config.data_dir));
 
     let listener = TcpListener::bind(("127.0.0.1", config.port)).await.unwrap();
@@ -61,7 +65,7 @@ async fn main() {
     tracker.wait().await;
 
     let db: Database = unsafe { Arc::try_unwrap(db).unwrap_unchecked() };
-    db.finalize();
+    db.cleanup();
 }
 
 async fn handle_connection(

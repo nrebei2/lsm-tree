@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::config::{MAX_FILE_SIZE_BYTES, SIZE_MULTIPLIER};
+use crate::config::{LEVEL1_FILE_CAPACITY, MAX_FILE_SIZE_BYTES, SIZE_MULTIPLIER};
 
 use super::{
     table::{Command, Table},
@@ -50,7 +50,7 @@ impl DiskLevel {
     }
 
     fn file_capacity(&self) -> usize {
-        4 * usize::pow(SIZE_MULTIPLIER, self.level - 1)
+        LEVEL1_FILE_CAPACITY * usize::pow(SIZE_MULTIPLIER, self.level - 1)
     }
 
     pub fn average_table_utilization(&self) -> f32 {
