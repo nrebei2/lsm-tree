@@ -16,6 +16,7 @@ mod command;
 mod config;
 
 /// TODO: explain how I lock levels to support threading
+/// Ex: When switch the lock to the next level during range/stats, I make sure a writer cant get the lock
 
 #[tokio::main]
 async fn main() {

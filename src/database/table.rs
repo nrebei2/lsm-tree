@@ -1,6 +1,7 @@
 use crate::config::{BLOCK_SIZE_BYTES, BLOOM_CAPACITY, MAX_FILE_SIZE_BLOCKS};
 
 use super::bloom::Bloom;
+use super::once_done::OnceDoneTrait;
 use bytes::{Buf, BufMut, BytesMut};
 use std::cmp::Ordering;
 use std::fmt::Debug;
@@ -84,7 +85,7 @@ impl Command {
 
     pub fn value(&self) -> Option<i32> {
         match self {
-            Self::Delete(key) => None,
+            Self::Delete(_) => None,
             &Self::Put(_, val) => Some(val),
         }
     }
@@ -185,6 +186,20 @@ impl Table {
 
     pub fn view_from(&self, block_index: usize) -> TableView {
         TableView::new(self.file_path(), block_index)
+    }
+
+    pub fn iter_commands_from(
+        &self,
+        block_index: usize,
+        delete_on_finish: bool,
+    ) -> impl Iterator<Item = Command> {
+        self.view_from(block_index)
+            .once_done(move |v| {
+                if delete_on_finish {
+                    v.delete_file()
+                }
+            })
+            .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
     }
 
     pub fn intersects(&self, other: &Table) -> Ordering {

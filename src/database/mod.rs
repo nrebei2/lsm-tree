@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::{
     cmp::Ordering,
     collections::HashMap,
@@ -8,7 +9,6 @@ use bytes::Buf;
 use disk_level::DiskLevel;
 use mem_level::MemLevel;
 use merge_iter::merge_sorted_commands;
-use once_done::OnceDoneTrait;
 use table::{BlockMut, Command, Table, TableBuilder};
 use tokio::sync::RwLock;
 
@@ -53,6 +53,7 @@ impl Database {
         let mut mem_write = self.memory.write().await;
         mem_write.insert(key, value);
 
+        // keep holding the write guard so
         if mem_write.len() >= MEM_CAPACITY as usize {
             let old_mem = mem_write.clear();
             drop(mem_write);
@@ -137,46 +138,50 @@ impl Database {
         min_key: i32,
         max_key: i32,
     ) -> Option<impl Iterator<Item = (i32, i32)>> {
-        if min_key >= max_key {
+        if min_key > max_key {
             return None;
         }
 
         let mut res: HashMap<i32, Option<i32>> = HashMap::new();
 
-        for (&key, &val) in self.memory.read().await.range(min_key..max_key) {
+        let mem = self.memory.read().await;
+        for (&key, &val) in mem.range(min_key..=max_key) {
             res.insert(key, val);
         }
 
-        for i in 0..NUM_LEVELS {
-            let level = self.disk[i].read().await;
+        let mut cur_level = self.disk[0].read().await;
+        drop(mem); // drop here instead of before so no writer can write to lvl1
 
-            if level.tables.is_empty() {
-                continue;
+        for i in 0..NUM_LEVELS {
+            if !cur_level.tables.is_empty() {
+                if let Some(locate_min) = cur_level.locate_nearest(min_key) {
+                    for command in cur_level.tables[locate_min.table_index]
+                        .iter_commands_from(locate_min.block_index, false)
+                        .chain(
+                            (&cur_level
+                                .tables
+                                .get(locate_min.table_index..)
+                                .unwrap_or(&[]))
+                                .iter()
+                                .flat_map(|t| t.iter_commands_from(0, false)),
+                        )
+                    {
+                        if command.key() < min_key {
+                            continue;
+                        }
+
+                        if command.key() > max_key {
+                            break;
+                        }
+
+                        res.entry(command.key()).or_insert(command.value());
+                    }
+                }
             }
 
-            if let Some(locate_min) = level.locate_nearest(min_key) {
-                let views = std::iter::once(
-                    level.tables[locate_min.table_index].view_from(locate_min.block_index),
-                )
-                .chain(
-                    (&level.tables.get(locate_min.table_index..).unwrap_or(&[]))
-                        .iter()
-                        .map(|t| t.view()),
-                );
-
-                for command in
-                    views.flat_map(|view| view.flat_map(|b| unsafe { b.as_ref().unwrap().iter() }))
-                {
-                    if command.key() < min_key {
-                        continue;
-                    }
-
-                    if command.key() >= max_key {
-                        break;
-                    }
-
-                    res.entry(command.key()).or_insert(command.value());
-                }
+            if let Some(next) = self.disk.get(i + 1) {
+                let next_level = next.read().await;
+                cur_level = next_level;
             }
         }
 
@@ -184,6 +189,66 @@ impl Database {
             None
         } else {
             Some(res.into_iter().filter_map(|(key, val)| Some((key, val?))))
+        }
+    }
+
+    pub async fn write_stats(&self, to: &mut String) {
+        let mut tally: HashMap<i32, bool> = HashMap::new();
+        let mut level_counts = [0_usize; NUM_LEVELS + 1];
+
+        to.push_str("\n---------------- Dump ----------------\n");
+
+        let mem = self.memory.read().await;
+        for (&key, &val) in mem.iter() {
+            if let Some(value) = val {
+                write!(to, "{key}:{value}:L0 ").unwrap();
+                level_counts[0] += 1;
+            }
+            tally.insert(key, val.is_some());
+        }
+
+        to.push_str("\n\n");
+
+        let mut cur_level = self.disk[0].read().await;
+        drop(mem);
+
+        for i in 0..NUM_LEVELS {
+            if !cur_level.tables.is_empty() {
+                for command in cur_level
+                    .tables
+                    .iter()
+                    .flat_map(|t| t.iter_commands_from(0, false))
+                {
+                    if let Command::Put(key, val) = command {
+                        write!(to, "{key}:{val}:L{} ", i + 1).unwrap();
+                        level_counts[i + 1] += 1;
+                    }
+                    tally
+                        .entry(command.key())
+                        .or_insert(command.value().is_some());
+                }
+                to.push_str("\n\n");
+            }
+
+            if let Some(next) = self.disk.get(i + 1) {
+                let next_level = next.read().await;
+                cur_level = next_level;
+            }
+        }
+
+        to.push_str("\n---------------- TLDR ----------------\n");
+
+        writeln!(
+            to,
+            "Logical Pairs: {}",
+            tally.into_values().filter(|v| *v).count()
+        )
+        .unwrap();
+        for (idx, counts) in level_counts.into_iter().enumerate() {
+            if counts == 0 {
+                continue;
+            }
+            writeln!(to, "LVL{idx}: {counts}").unwrap();
         }
     }
 
@@ -231,12 +296,11 @@ fn compact_in_place(level: &mut DiskLevel) {
         .iter()
         .position(|t| t.file_size < MAX_FILE_SIZE_BYTES as u64)
         .unwrap();
-    let mut partial_tables = level.tables.split_off(first_partial_table);
+    let partial_tables = level.tables.split_off(first_partial_table);
 
-    let commands = partial_tables.iter_mut().flat_map(|t| {
-        (t.view().once_done(|v| v.delete_file()))
-            .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
-    });
+    let commands = partial_tables
+        .iter()
+        .flat_map(|t| t.iter_commands_from(0, true));
 
     let mut new_tables = build_tables(commands, &level.level_directory);
     level.tables.append(&mut new_tables);
@@ -258,18 +322,14 @@ fn merge(l1: &mut Vec<Table>, l2: &mut DiskLevel) {
 
             for group in groups.iter() {
                 let (slice_start, slice_end) = group.tables1;
-                let l1_commands = (&mut l1[slice_start..slice_end]).iter_mut().flat_map(|t| {
-                    (t.view().once_done(|v| v.delete_file()))
-                        .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
-                });
+                let l1_commands = (&mut l1[slice_start..slice_end])
+                    .iter()
+                    .flat_map(|t| t.iter_commands_from(0, true));
 
                 let (slice_start, slice_end) = group.tables2;
                 let l2_commands = (&mut l2.tables[slice_start..slice_end])
-                    .iter_mut()
-                    .flat_map(|t| {
-                        (t.view().once_done(|v| v.delete_file()))
-                            .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
-                    });
+                    .iter()
+                    .flat_map(|t| t.iter_commands_from(0, true));
 
                 let merge_commands_iter = merge_sorted_commands(l1_commands, l2_commands);
                 new_tables.append(&mut build_tables(merge_commands_iter, &l2.level_directory));

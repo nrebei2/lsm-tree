@@ -1,7 +1,8 @@
+use std::fmt::Write;
+use std::i32;
 use tokio::io;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
-use std::fmt::Write;
 
 use crate::database::Database;
 
@@ -11,7 +12,8 @@ pub enum Command {
     GET { key: i32 },
     DELETE { key: i32 },
     LOAD { data: Vec<u8> },
-    RANGE { min_key: i32, max_key: i32 }, // TODO: stats
+    RANGE { min_key: i32, max_key: i32 },
+    STATS,
 }
 
 impl Command {
@@ -35,11 +37,14 @@ impl Command {
                 out.push_str("OK");
             }
             Self::RANGE { min_key, max_key } => {
-                if let Some(iter) = db.range(min_key, max_key).await {
+                if let Some(iter) = db.range(min_key, max_key - 1).await {
                     for (key, val) in iter {
-                        write!(out, "{key}:{val} ").unwrap();
+                        write!(out, "{key}:{} ", val).unwrap();
                     }
                 }
+            }
+            Self::STATS => {
+                db.write_stats(out).await;
             }
         }
     }
@@ -72,6 +77,12 @@ pub async fn read_command<T: AsyncBufReadExt + Unpin>(reader: &mut T) -> io::Res
             let max_key = reader.read_i32().await?;
             Command::RANGE { min_key, max_key }
         }
-        x => todo!("Read {}", x as char),
+        b's' => Command::STATS,
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid incoming command!",
+            ))
+        }
     })
 }

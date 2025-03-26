@@ -13,7 +13,7 @@ pub enum Command {
     DELETE { key: i32 },
     LOAD { file: PathBuf },
     RANGE { min_key: i32, max_key: i32 },
-     // TODO: stats
+    STATS
 }
 
 impl Command {
@@ -45,6 +45,9 @@ impl Command {
                 buf.put_u8(b'r');
                 buf.put_i32(*min_key);
                 buf.put_i32(*max_key);
+            }
+            Self::STATS => {
+                buf.put_u8(b's');
             }
         }
     }
@@ -81,6 +84,7 @@ impl Command {
                 let max_key: i32 = split_iter.next()?.parse().ok()?;
                 Some(Command::RANGE { min_key, max_key })
             }
+            "s" => Some(Command::STATS),
             _ => None,
         }
     }
