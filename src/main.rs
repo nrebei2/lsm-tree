@@ -7,7 +7,10 @@ use data::Database;
 use tokio::{
     io::{AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
+    signal,
 };
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 mod command;
 mod config;
@@ -18,40 +21,82 @@ async fn main() {
     let db = Arc::new(Database::new(config.data_dir));
 
     let listener = TcpListener::bind(("127.0.0.1", config.port)).await.unwrap();
+    println!("Starting server on 127.0.0.1:{}!", config.port);
+
+    let token = CancellationToken::new();
+    let cloned_token = token.clone();
+
+    let tracker = TaskTracker::new();
+    tracker.spawn(async move {
+        match signal::ctrl_c().await {
+            Ok(()) => {
+                cloned_token.cancel();
+            }
+            Err(err) => {
+                eprintln!("Unable to listen for shutdown signal: {}", err);
+            }
+        }
+    });
 
     loop {
-        let (stream, client) = listener.accept().await.unwrap();
-
-        let db_clone = db.clone();
-        tokio::spawn(async move {
-            println!("New connection with {:?}", client);
-            handle_connection(stream, client, db_clone).await;
-            println!("Closed connection with {:?}", client);
-        });
+        tokio::select! {
+            accept_result = listener.accept() => {
+                let (stream, client) = accept_result.unwrap();
+                let db_clone = db.clone();
+                let cloned_token = token.clone();
+                tracker.spawn(async move {
+                    println!("New connection with {:?}", client);
+                    handle_connection(stream, client, db_clone, cloned_token).await;
+                    println!("Closed connection with {:?}", client);
+                });
+            }
+            _ = token.cancelled() => {
+                break;
+            }
+        }
     }
+
+    tracker.close();
+    // Wait for everything to finish.
+    tracker.wait().await;
+
+    let db: Database = unsafe { Arc::try_unwrap(db).unwrap_unchecked() };
+    db.finalize();
 }
 
-async fn handle_connection(stream: TcpStream, addr: SocketAddr, db: Arc<Database>) {
+async fn handle_connection(
+    stream: TcpStream,
+    addr: SocketAddr,
+    db: Arc<Database>,
+    cancel_token: CancellationToken,
+) {
     let (read, mut write) = stream.into_split();
     let mut buf_read = BufReader::new(read);
 
     let mut out_buf = String::new();
     loop {
-        let command = if let Ok(command) = read_command(&mut buf_read).await {
-            command
-        } else {
-            break;
-        };
+        tokio::select! {
+            read_res = read_command(&mut buf_read) => {
+                let command = if let Ok(command) = read_res {
+                    command
+                } else {
+                    break;
+                };
 
-        println!("Received command {:?} from {:?}", command, addr);
-        command.execute(&db, &mut out_buf).await;
+                println!("Received command {:?} from {:?}", command, addr);
+                command.execute(&db, &mut out_buf).await;
 
-        let mut bytes = out_buf.into_bytes();
-        // delimiter
-        bytes.push(0x00);
-        write.write_all(&bytes).await.unwrap();
+                let mut bytes = out_buf.into_bytes();
+                // delimiter
+                bytes.push(0x00);
+                write.write_all(&bytes).await.unwrap();
 
-        bytes.clear();
-        out_buf = unsafe { String::from_utf8_unchecked(bytes) };
+                bytes.clear();
+                out_buf = unsafe { String::from_utf8_unchecked(bytes) };
+            }
+            _ = cancel_token.cancelled() => {
+                break;
+            }
+        }
     }
 }

@@ -1,13 +1,15 @@
 use std::{env::args, path::PathBuf};
 
-// pub const MEM_CAPACITY: u32 = 7454720;
-pub const MEM_CAPACITY: u32 = 10;
+pub const BLOCK_SIZE_BYTES: usize = 4096;
 
 pub const SIZE_MULTIPLIER: usize = 2;
 pub const NUM_LEVELS: usize = 6;
 
 pub const MAX_FILE_SIZE_BYTES: usize = 1 << 22; // 4 MB
 pub const MAX_FILE_SIZE_BLOCKS: usize = MAX_FILE_SIZE_BYTES >> 12;
+
+// Maximum number of entries in the memory level that can serialize into a single file
+pub const MEM_CAPACITY: u32 = (MAX_FILE_SIZE_BLOCKS * BLOCK_SIZE_BYTES / 9) as u32;
 
 pub const BLOOM_CAPACITY: usize = 1 << 16;
 

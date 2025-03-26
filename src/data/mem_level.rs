@@ -1,7 +1,7 @@
-use std::{collections::BTreeMap, ops::Deref, path::Path};
+use std::{collections::BTreeMap, fs, ops::Deref, path::Path};
 
 use super::{
-    table::{BlockMut, Command, Table, TableBuilder},
+    table::{BlockMut, Command, Table, TableBuilder, TableView},
     GetResult,
 };
 
@@ -18,10 +18,27 @@ impl Deref for MemLevel {
 }
 
 impl MemLevel {
-    pub const fn new() -> Self {
-        return Self {
+    pub fn new(data_directory: &Path) -> Self {
+        let level_directory = data_directory.join("level0");
+        fs::create_dir_all(&level_directory).unwrap();
+
+        let mut res = Self {
             data: BTreeMap::new(),
         };
+
+        if let Some(Ok(entry)) = fs::read_dir(&level_directory).unwrap().into_iter().next() {
+            for command in
+                TableView::new(entry.path()).flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
+            {
+                match command {
+                    Command::Delete(key) => res.delete(key),
+                    Command::Put(key, val) => res.insert(key, val),
+                };
+            }
+            let _ = fs::remove_file(&entry.path());
+        };
+
+        return res;
     }
 
     pub fn insert(&mut self, key: i32, value: i32) {
@@ -50,7 +67,6 @@ impl MemLevel {
                 None => Command::Delete(key),
                 Some(val) => Command::Put(key, val),
             };
-            // println!("{command:?}");
 
             if !block.push_command(command) {
                 tb.insert_block(&block);

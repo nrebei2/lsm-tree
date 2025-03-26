@@ -30,7 +30,7 @@ pub struct Database {
 
 impl Database {
     pub fn new(data_directory: PathBuf) -> Self {
-        let memory = MemLevel::new();
+        let memory = MemLevel::new(&data_directory);
         let disk: [RwLock<DiskLevel>; NUM_LEVELS] =
             std::array::from_fn(|idx| RwLock::new(DiskLevel::new(&data_directory, (idx + 1) as u32)));
 
@@ -48,8 +48,7 @@ impl Database {
         if mem_write.len() >= MEM_CAPACITY as usize {
             let old_mem = mem_write.clear();
             self.handle_overflow(old_mem).await;
-        }
-        
+        } 
     }
 
     pub async fn delete(&self, key: i32) {
@@ -99,6 +98,11 @@ impl Database {
         }
 
         None
+    }
+
+    pub fn finalize(self) {
+        let mem = self.memory.into_inner();
+        mem.write_to_table(self.data_directory.join("level0").as_path());  
     }
 }
 

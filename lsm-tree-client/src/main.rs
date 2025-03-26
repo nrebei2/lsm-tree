@@ -30,7 +30,10 @@ fn main() -> io::Result<()> {
             std::io::stdout().flush()?;
 
             // read
-            std::io::stdin().read_line(&mut input_buf)?;
+            if std::io::stdin().read_line(&mut input_buf)? == 0 {
+                break;
+            }
+
             input_buf.pop(); // \n
             if let Some(command) = Command::from_input(&input_buf) {
                 // send
@@ -40,6 +43,14 @@ fn main() -> io::Result<()> {
 
                 // recv
                 read_half.read_until(0x00, &mut output_buf)?;
+                if output_buf.is_empty() || !output_buf.ends_with(b"\0") {
+                    // connection was cut off
+                    println!(
+                        "Could not read response from server at 127.0.0.1:{}: Connection dropped",
+                        args.port
+                    );
+                    break;
+                }
                 output_buf.pop(); // \0
 
                 // print
@@ -53,7 +64,7 @@ fn main() -> io::Result<()> {
         }
     } else {
         println!(
-            "Could not connect to lsm tree server at 127.0.0.1:{}: Connection refused",
+            "Could not connect to server at 127.0.0.1:{}: Connection refused",
             args.port
         );
     }

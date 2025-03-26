@@ -1,4 +1,4 @@
-use crate::config::{BLOOM_CAPACITY, MAX_FILE_SIZE_BLOCKS};
+use crate::config::{BLOCK_SIZE_BYTES, BLOOM_CAPACITY, MAX_FILE_SIZE_BLOCKS};
 
 use super::bloom::Bloom;
 use bytes::{Buf, BufMut, BytesMut};
@@ -20,8 +20,8 @@ pub struct BlockMut {
 impl BlockMut {
     pub fn new() -> Self {
         Self {
-            commands: BytesMut::with_capacity(4096),
-            keys: Vec::with_capacity(1024),
+            commands: BytesMut::with_capacity(BLOCK_SIZE_BYTES),
+            keys: Vec::with_capacity(BLOCK_SIZE_BYTES >> 2),
         }
     }
 
@@ -100,8 +100,6 @@ impl TableBuilder {
             .unwrap()
             .as_nanos()
             .to_string();
-
-        fs::create_dir_all(&directory).unwrap();
 
         let file_path = directory.join(tmp_file_name);
         let file = File::create_new(&file_path).unwrap();
@@ -214,7 +212,7 @@ impl Table {
         let mut bloom = Bloom::new(BLOOM_CAPACITY);
 
         let file_len = fs::metadata(file_path).unwrap().len();
-        let block_count = file_len.div_ceil(4096);
+        let block_count = file_len.div_ceil(BLOCK_SIZE_BYTES as u64);
 
         let mut index = Vec::with_capacity(block_count as usize);
 
@@ -248,12 +246,12 @@ impl Table {
 }
 
 pub struct BlockView {
-    buf: [u8; 4096],
+    buf: [u8; BLOCK_SIZE_BYTES],
 }
 
 impl BlockView {
     pub fn new() -> Self {
-        Self { buf: [0xFF; 4096] }
+        Self { buf: [0xFF; BLOCK_SIZE_BYTES] }
     }
 
     fn as_mut_slice(&mut self) -> &mut [u8] {
@@ -306,7 +304,7 @@ pub struct TableView {
 }
 
 impl TableView {
-    fn new(file_path: PathBuf) -> Self {
+    pub fn new(file_path: PathBuf) -> Self {
         let file = File::open(&file_path).unwrap();
 
         Self {
@@ -320,14 +318,14 @@ impl TableView {
     pub fn get_block_at(&mut self, index: usize) -> Option<&BlockView> {
         let bytes_read = self
             .file
-            .read_at(self.block_buf.as_mut_slice(), (index * 4096) as u64)
+            .read_at(self.block_buf.as_mut_slice(), (index * BLOCK_SIZE_BYTES) as u64)
             .unwrap();
 
         if bytes_read == 0 {
             return None;
         }
 
-        if bytes_read < 4096 {
+        if bytes_read < BLOCK_SIZE_BYTES {
             // this must be the last page
             // sentinel of 0xFF
             self.block_buf.as_mut_slice()[bytes_read] = 0xFF;
