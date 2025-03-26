@@ -1,3 +1,5 @@
+use std::{fs::{self, metadata}, io::Read, path::PathBuf};
+
 use bytes::BufMut;
 
 #[derive(Clone, Debug)]
@@ -5,7 +7,8 @@ pub enum Command {
     PUT { key: i32, val: i32 },
     GET { key: i32 },
     DELETE { key: i32 },
-    // TODO: load, range, stats
+    LOAD { file: PathBuf }
+    // TODO: range, stats
 }
 
 impl Command {
@@ -23,6 +26,15 @@ impl Command {
             Self::DELETE { key } => {
                 buf.put_u8(b'd');
                 buf.put_i32(*key);
+            }
+            Self::LOAD { file } => {
+                buf.put_u8(b'l');
+
+                let file_size = metadata(file).unwrap().len();
+                let kv_pairs = file_size / 8;
+
+                buf.put_u64(kv_pairs);
+                fs::File::open(file).unwrap().read_to_end(buf).unwrap();
             }
         }
     }
@@ -44,6 +56,15 @@ impl Command {
             "d" => {
                 let key: i32 = split_iter.next()?.parse().ok()?;
                 Some(Command::DELETE { key })
+            }
+            "l" => {
+                let file: PathBuf = split_iter.next()?.parse().ok()?;
+
+                if !file.is_file() {
+                    return None
+                }
+
+                Some(Command::LOAD { file })
             }
             _ => None,
         }

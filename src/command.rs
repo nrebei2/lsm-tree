@@ -2,14 +2,15 @@ use tokio::io;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 
-use crate::data::Database;
+use crate::database::Database;
 
 #[derive(Clone, Debug)]
 pub enum Command {
     PUT { key: i32, val: i32 },
     GET { key: i32 },
     DELETE { key: i32 },
-    // TODO: load, range, stats
+    LOAD { data: Vec<u8> }
+    // TODO: range, stats
 }
 
 impl Command {
@@ -26,6 +27,10 @@ impl Command {
             }
             Self::PUT { key, val } => {
                 db.insert(key, val).await;
+                out.push_str("OK");
+            }
+            Self::LOAD { data } => {
+                db.load(&data).await;
                 out.push_str("OK");
             }
         }
@@ -46,6 +51,13 @@ pub async fn read_command<T: AsyncBufReadExt + Unpin>(reader: &mut T) -> io::Res
         b'd' => {
             let key = reader.read_i32().await?;
             Command::DELETE { key }
+        }
+        b'l' => {
+            let kv_pairs = reader.read_u64().await?;
+            let mut buf = vec![0_u8; kv_pairs as usize * 8];
+
+            reader.read_exact(&mut buf).await?;
+            Command::LOAD { data: buf }
         }
         x => todo!("Read {}", x as char),
     })

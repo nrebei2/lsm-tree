@@ -1,9 +1,9 @@
-mod data;
+mod database;
 use std::{net::SocketAddr, sync::Arc};
 
 use command::read_command;
 use config::Config;
-use data::Database;
+use database::Database;
 use tokio::{
     io::{AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
