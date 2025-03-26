@@ -38,7 +38,14 @@ fn main() -> io::Result<()> {
             if let Some(command) = Command::from_input(&input_buf) {
                 // send
                 command.serialize(&mut output_buf);
-                write_half.write_all(&output_buf)?;
+                if write_half.write_all(&output_buf).is_err() {
+                    // connection was cut off
+                    println!(
+                        "Could not send command to server at 127.0.0.1:{}: Connection dropped",
+                        args.port
+                    );
+                    break;
+                }
                 output_buf.clear();
 
                 // recv
