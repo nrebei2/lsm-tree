@@ -1,5 +1,6 @@
 mod database;
 use std::{net::SocketAddr, sync::Arc};
+use chrono::Local;
 
 use command::read_command;
 use config::Config;
@@ -75,6 +76,7 @@ async fn handle_connection(
     db: Arc<Database>,
     cancel_token: CancellationToken,
 ) {
+    let mut processed: usize = 0;
     let (read, mut write) = stream.into_split();
     let mut buf_read = BufReader::new(read);
 
@@ -87,8 +89,15 @@ async fn handle_connection(
                 } else {
                     break;
                 };
+                
+                processed += 1;
 
-                println!("Received command {:?} from {:?}", command, addr);
+                if processed % 1 == 0 {
+                    // println!("Received command {:?} from {:?}, this is the {processed} command!", command, addr);
+                    let now = Local::now();
+                    println!("---- {} ----", now.format("%H:%M:%S%.6f"));
+                }
+
                 command.execute(&db, &mut out_buf).await;
 
                 let mut bytes = out_buf.into_bytes();
