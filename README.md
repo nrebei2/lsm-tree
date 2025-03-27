@@ -27,7 +27,7 @@ cd lsm-tree-client; cargo build --release
 - Record diskio usage and stdout of server:
 
 ```shell
-./target/release/lsm-tree > timestamp.txt &; sleep 1; sudo fs_usage -w -f diskio $last_pid > io.txt
+./target/release/lsm-tree > out.txt &; sudo fs_usage -w -f filesys $last_pid
 ```
 
 - Feed `generator` to client:

@@ -1,3 +1,5 @@
 /target
 /database
 *.txt
+/bench
+/venv

@@ -301,13 +301,15 @@ void generate_workload(struct settings *s) {
     int current_file = 0;
     FILE *pf = NULL;
 
+    int op_count = 0;
+    int operation = OPERATION_GET;
     while(current_deletes < s->deletes ||
           current_puts < s->puts ||
           current_gets < s->gets || 
           current_ranges < s->ranges) 
     {
         // Decide a random operation
-        int operation = rand() % 4;
+        // int operation = rand() % 4;
 
         // TODO: Check if this operation has remaining else continue.
         switch(operation) {
@@ -461,6 +463,12 @@ void generate_workload(struct settings *s) {
     if(pf != NULL) {
         fclose(pf);
         pf = NULL;
+    }
+
+    op_count += 1;
+    if(op_count % 10000 == 0) {
+        op_count = 0;
+        operation = 1 - operation;
     }
 }
 
