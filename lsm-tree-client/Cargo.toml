@@ -6,3 +6,8 @@ edition = "2021"
 [dependencies]
 bytes = "1.9.0"
 clap = { version = "4.5.32", features = ["derive"] }
+relm4 = "0.9.1"
+relm4-components = "0.9.1"
+plotters = "0.3.3"
+plotters-cairo = "0.7.0"
+arraydeque = "0.5.1"

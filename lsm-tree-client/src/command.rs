@@ -13,10 +13,27 @@ pub enum Command {
     DELETE { key: i32 },
     LOAD { file: PathBuf },
     RANGE { min_key: i32, max_key: i32 },
-    STATS
+    STATS,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandType {
+    PUT,
+    GET,
+    DELETE,
+    RANGE,
 }
 
 impl Command {
+    pub fn to_type(&self) -> Option<CommandType> {
+        Some(match self {
+            Self::DELETE { .. } => CommandType::DELETE,
+            Self::PUT { .. } => CommandType::PUT,
+            Self::GET { .. } => CommandType::GET,
+            Self::RANGE { .. } => CommandType::RANGE,
+            _ => return None,
+        })
+    }
     pub fn serialize(&self, buf: &mut Vec<u8>) {
         match self {
             Self::PUT { key, val } => {
