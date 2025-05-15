@@ -188,12 +188,12 @@ impl Table {
         TableView::new(self.file_path(), block_index)
     }
 
-    pub fn iter_commands_from(
+    pub fn commands(
         &self,
-        block_index: usize,
+        start_at_block: usize,
         delete_on_finish: bool,
     ) -> impl Iterator<Item = Command> {
-        self.view_from(block_index)
+        self.view_from(start_at_block)
             .once_done(move |v| {
                 if delete_on_finish {
                     v.delete_file()
@@ -224,7 +224,7 @@ impl Table {
         let old_file_path = self.file_path();
         self.directory = to_dir.to_owned();
         let new_file_path = self.file_path();
-        // println!("Renaming {:?} to {:?}", old_file_path, new_file_path);
+
         fs::rename(old_file_path, new_file_path).unwrap();
     }
 

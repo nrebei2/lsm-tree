@@ -1,9 +1,12 @@
 use std::{env::args, path::PathBuf};
 
+// Size of block for fence pointers
 pub const BLOCK_SIZE_BYTES: usize = 4096;
 
-// 466033 * 4(5^5) > 2^32 ==> the final level can fit all possible key-value pairs
+// 466033 (number of key-values per file) * 4(5^5) (total number of possible files) > 2^32 ==> the final level can fit all possible key-value pairs
+// Maximum number of files that can be in level one before compaction 
 pub const LEVEL1_FILE_CAPACITY: usize = 4;
+// (Maximum number of files in level n + 1) = SIZE_MULTIPLIER * (Maximum number of files in level n) 
 pub const SIZE_MULTIPLIER: usize = 5;
 pub const NUM_LEVELS: usize = 6;
 

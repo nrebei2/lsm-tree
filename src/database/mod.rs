@@ -150,20 +150,20 @@ impl Database {
         }
 
         let mut cur_level = self.disk[0].read().await;
-        drop(mem); // drop here instead of before so no writer can write to lvl1
+        drop(mem); // drop here instead of before locking level 1 so no writer can write to lvl1
 
         for i in 0..NUM_LEVELS {
             if !cur_level.tables.is_empty() {
                 if let Some(locate_min) = cur_level.locate_nearest(min_key) {
                     for command in cur_level.tables[locate_min.table_index]
-                        .iter_commands_from(locate_min.block_index, false)
+                        .commands(locate_min.block_index, false)
                         .chain(
                             (&cur_level
                                 .tables
                                 .get(locate_min.table_index..)
                                 .unwrap_or(&[]))
                                 .iter()
-                                .flat_map(|t| t.iter_commands_from(0, false)),
+                                .flat_map(|t| t.commands(0, false)),
                         )
                     {
                         if command.key() < min_key {
@@ -217,7 +217,7 @@ impl Database {
                 for command in cur_level
                     .tables
                     .iter()
-                    .flat_map(|t| t.iter_commands_from(0, false))
+                    .flat_map(|t| t.commands(0, false))
                 {
                     if let Command::Put(key, val) = command {
                         write!(to, "{key}:{val}:L{} ", i + 1).unwrap();
@@ -300,7 +300,7 @@ fn compact_in_place(level: &mut DiskLevel) {
 
     let commands = partial_tables
         .iter()
-        .flat_map(|t| t.iter_commands_from(0, true));
+        .flat_map(|t| t.commands(0, true));
 
     let mut new_tables = build_tables(commands, &level.level_directory);
     level.tables.append(&mut new_tables);
@@ -324,12 +324,12 @@ fn merge(l1: &mut Vec<Table>, l2: &mut DiskLevel) {
                 let (slice_start, slice_end) = group.tables1;
                 let l1_commands = (&mut l1[slice_start..slice_end])
                     .iter()
-                    .flat_map(|t| t.iter_commands_from(0, true));
+                    .flat_map(|t| t.commands(0, true));
 
                 let (slice_start, slice_end) = group.tables2;
                 let l2_commands = (&mut l2.tables[slice_start..slice_end])
                     .iter()
-                    .flat_map(|t| t.iter_commands_from(0, true));
+                    .flat_map(|t| t.commands(0, true));
 
                 let merge_commands_iter = merge_sorted_commands(l1_commands, l2_commands);
                 new_tables.append(&mut build_tables(merge_commands_iter, &l2.level_directory));

@@ -33,6 +33,11 @@ struct Args {
 fn main() {
     let _ = ARGS.set(Args::parse());
 
+    // Connects to the server
+    // Repeatedly takes in commands following the CS265 DSL from the user
+    // writes command to server
+    // reads back the response from the server
+
     if ARGS.get().unwrap().cli {
         let _ = run_text_client();
     } else {
