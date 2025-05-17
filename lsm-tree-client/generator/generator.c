@@ -265,6 +265,8 @@ void generate_workload(struct settings *s)
     T = gsl_rng_default;
     r = gsl_rng_alloc(T);
 
+    gsl_rng_set(r, s->seed); 
+
     int fd = open("0.dat", O_RDONLY);
 
     struct stat st;
@@ -285,7 +287,7 @@ void generate_workload(struct settings *s)
     int old_puts_pool_count = 0;
     if (s->puts == 0)
     {
-        old_puts_pool_max_size = dat_total_keys;
+        old_puts_pool_max_size = dat_total_keys > 40000 ? 40000 : dat_total_keys;
     }
     else if (s->puts < MAX_OLD_PUTS_POOL_SIZE)
     {
@@ -332,22 +334,15 @@ void generate_workload(struct settings *s)
     // Read every other 4-byte integer in 0.dat
     if (s->puts == 0 && fd != -1)
     {
-        for (off_t i = 0; i < dat_total_keys; i += 1)
+        for (off_t i = 0; i < old_puts_pool_max_size; i += 1)
         {
             KEY_t key;
-            if (pread(fd, &key, sizeof(key), i * 8) != sizeof(key))
+            if (pread(fd, &key, sizeof(key), rand() % (dat_total_keys * 8)) != sizeof(key))
             {
                 perror("pread failed");
                 break;
             }
-            if (old_puts_pool_count >= old_puts_pool_max_size)
-            {
-                old_puts_pool[rand() % old_puts_pool_count] = key;
-            }
-            else
-            {
-                old_puts_pool[old_puts_pool_count++] = key;
-            }
+            old_puts_pool[old_puts_pool_count++] = key;
 
             current_puts++;
         }

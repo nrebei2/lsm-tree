@@ -12,13 +12,13 @@ pub enum Command {
     PUT { key: i32, val: i32 },
     GET { key: i32 },
     DELETE { key: i32 },
-    LOAD { data: Vec<u8> },
+    LOAD { kv_pairs: u64 },
     RANGE { min_key: i32, max_key: i32 },
     STATS,
 }
 
 impl Command {
-    pub async fn execute(self, db: &Database, out: &mut String, stats: &mut ClientStats) {
+    pub async fn execute<T: AsyncBufReadExt + Unpin>(self, db: &Database, stats: &mut ClientStats, reader: &mut T, out: &mut String) {
         match self {
             Self::GET { key } => {
                 if let Some(val) = db.get(key, stats).await {
@@ -33,12 +33,12 @@ impl Command {
                 db.insert(key, val).await;
                 out.push_str("OK");
             }
-            Self::LOAD { data } => {
-                db.load(&data).await;
+            Self::LOAD { kv_pairs } => {
+                let _ = db.load(kv_pairs, reader).await;
                 out.push_str("OK");
             }
             Self::RANGE { min_key, max_key } => {
-                if let Some(iter) = db.range(min_key, max_key - 1).await {
+                if let Some(iter) = db.range(min_key, max_key - 1, stats).await {
                     for (key, val) in iter {
                         write!(out, "{key}:{} ", val).unwrap();
                     }
@@ -68,10 +68,7 @@ pub async fn read_command<T: AsyncBufReadExt + Unpin>(reader: &mut T) -> io::Res
         }
         b'l' => {
             let kv_pairs = reader.read_u64().await?;
-            let mut buf = vec![0_u8; kv_pairs as usize * 8];
-
-            reader.read_exact(&mut buf).await?;
-            Command::LOAD { data: buf }
+            Command::LOAD { kv_pairs }
         }
         b'r' => {
             let min_key = reader.read_i32().await?;

@@ -202,6 +202,24 @@ impl Table {
             .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
     }
 
+    pub fn commands_ext<T: Fn()>(
+        &self,
+        start_at_block: usize,
+        delete_on_finish: bool,
+        mut on_block: T,
+    ) -> impl Iterator<Item = Command> {
+        self.view_from(start_at_block)
+            .once_done(move |v| {
+                if delete_on_finish {
+                    v.delete_file()
+                }
+            })
+            .flat_map(move |b| {
+                on_block();
+                unsafe { b.as_ref().unwrap().iter() }
+            })
+    }
+
     pub fn intersects(&self, other: &Table) -> Ordering {
         if self.max_key < other.min_key {
             Ordering::Less

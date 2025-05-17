@@ -1,10 +1,13 @@
 use std::{collections::BTreeMap, fs, ops::Deref, path::Path};
 
+use deepsize::DeepSizeOf;
+
 use super::{
     table::{BlockMut, Command, Table, TableBuilder, TableView},
     GetResult,
 };
 
+#[derive(DeepSizeOf)]
 pub struct MemLevel {
     data: BTreeMap<i32, Option<i32>>,
 }

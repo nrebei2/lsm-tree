@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::fmt::Write;
 use std::{
     cmp::Ordering,
@@ -5,11 +6,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bytes::Buf;
+use deepsize::DeepSizeOf;
 use disk_level::DiskLevel;
 use mem_level::MemLevel;
 use merge_iter::merge_sorted_commands;
 use table::{BlockMut, Command, Table, TableBuilder};
+use tokio::io::AsyncReadExt;
+use tokio::io::{self, AsyncBufReadExt};
 use tokio::sync::RwLock;
 
 use crate::config::{MAX_FILE_SIZE_BYTES, MEM_CAPACITY, NUM_LEVELS};
@@ -60,12 +63,17 @@ impl Database {
         }
     }
 
-    pub async fn load(&self, mut data: &[u8]) {
+    pub async fn load<T: AsyncBufReadExt + Unpin>(
+        &self,
+        kv_pairs: u64,
+        reader: &mut T,
+    ) -> io::Result<()> {
         // a bit better than multiple calls to insert as locks are kept to a minimum
         let mut mem_write = self.memory.write().await;
-        while data.has_remaining() {
-            let key = data.get_i32();
-            let val = data.get_i32();
+
+        for _ in 0..kv_pairs {
+            let key = reader.read_i32().await?;
+            let val = reader.read_i32().await?;
 
             mem_write.insert(key, val);
 
@@ -76,6 +84,7 @@ impl Database {
                 mem_write = self.memory.write().await;
             }
         }
+        Ok(())
     }
 
     pub async fn delete(&self, key: i32) {
@@ -127,13 +136,13 @@ impl Database {
                 GetResult::Deleted => {
                     total_block_reads += 1;
                     stats.record_blocks_read(total_block_reads);
-                    return None
-                },
+                    return None;
+                }
                 GetResult::Value(val) => {
                     total_block_reads += 1;
                     stats.record_blocks_read(total_block_reads);
-                    return Some(val)
-                },
+                    return Some(val);
+                }
                 GetResult::NotFound(read_block) => {
                     if read_block {
                         total_block_reads += 1;
@@ -150,6 +159,7 @@ impl Database {
         &self,
         min_key: i32,
         max_key: i32,
+        stats: &mut ClientStats,
     ) -> Option<impl Iterator<Item = (i32, i32)>> {
         if min_key > max_key {
             return None;
@@ -165,18 +175,25 @@ impl Database {
         let mut cur_level = self.disk[0].read().await;
         drop(mem); // drop here instead of before locking level 1 so no writer can write to lvl1
 
+        let block_reads = Cell::new(0_u64);
         for i in 0..NUM_LEVELS {
             if !cur_level.tables.is_empty() {
                 if let Some(locate_min) = cur_level.locate_nearest(min_key) {
                     for command in cur_level.tables[locate_min.table_index]
-                        .commands(locate_min.block_index, false)
+                        .commands_ext(locate_min.block_index, false, || unsafe {
+                            *block_reads.as_ptr() += 1;
+                        })
                         .chain(
                             (&cur_level
                                 .tables
-                                .get(locate_min.table_index..)
+                                .get(locate_min.table_index + 1..)
                                 .unwrap_or(&[]))
                                 .iter()
-                                .flat_map(|t| t.commands(0, false)),
+                                .flat_map(|t| {
+                                    t.commands_ext(0, false, || unsafe {
+                                        *block_reads.as_ptr() += 1;
+                                    })
+                                }),
                         )
                     {
                         if command.key() < min_key {
@@ -197,6 +214,8 @@ impl Database {
                 cur_level = next_level;
             }
         }
+
+        stats.record_blocks_read(block_reads.get());
 
         if res.is_empty() {
             None
@@ -227,11 +246,7 @@ impl Database {
 
         for i in 0..NUM_LEVELS {
             if !cur_level.tables.is_empty() {
-                for command in cur_level
-                    .tables
-                    .iter()
-                    .flat_map(|t| t.commands(0, false))
-                {
+                for command in cur_level.tables.iter().flat_map(|t| t.commands(0, false)) {
                     if let Command::Put(key, val) = command {
                         write!(to, "{key}:{val}:L{} ", i + 1).unwrap();
                         level_counts[i + 1] += 1;
@@ -263,6 +278,16 @@ impl Database {
             }
             writeln!(to, "LVL{idx}: {counts}").unwrap();
         }
+    }
+
+    pub async fn size_bytes(&self) -> usize {
+        let mut total_size = self.memory.read().await.deep_size_of();
+
+        for i in 0..NUM_LEVELS {
+            total_size += self.disk[i].read().await.size_bytes();
+        }
+
+        total_size
     }
 
     pub fn cleanup(self) {
@@ -311,9 +336,7 @@ fn compact_in_place(level: &mut DiskLevel) {
         .unwrap();
     let partial_tables = level.tables.split_off(first_partial_table);
 
-    let commands = partial_tables
-        .iter()
-        .flat_map(|t| t.commands(0, true));
+    let commands = partial_tables.iter().flat_map(|t| t.commands(0, true));
 
     let mut new_tables = build_tables(commands, &level.level_directory);
     level.tables.append(&mut new_tables);

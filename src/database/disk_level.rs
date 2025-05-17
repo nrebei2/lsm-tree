@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{config::{LEVEL1_FILE_CAPACITY, MAX_FILE_SIZE_BYTES, SIZE_MULTIPLIER}, ClientStats};
+use crate::config::{LEVEL1_FILE_CAPACITY, MAX_FILE_SIZE_BYTES, SIZE_MULTIPLIER};
 
 use super::{
     table::{Command, Table},
@@ -160,5 +160,9 @@ impl DiskLevel {
         }
 
         GetResult::NotFound(true)
+    }
+
+    pub fn size_bytes(&self) -> usize {
+        self.tables.iter().map(|t| t.file_size).sum::<u64>() as usize
     }
 }
