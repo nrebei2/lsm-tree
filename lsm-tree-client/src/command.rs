@@ -1,10 +1,11 @@
 use std::{
     fs::{self, metadata},
-    io::Read,
+    io::{Read, Write},
     path::PathBuf,
 };
 
 use bytes::BufMut;
+use relm4::tokio::io;
 
 #[derive(Clone, Debug)]
 pub enum Command {
@@ -34,39 +35,48 @@ impl Command {
             _ => return None,
         })
     }
-    pub fn serialize(&self, buf: &mut Vec<u8>) {
+    pub fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        let mut buf = [0_u8; 9];
+        let mut slc = buf.as_mut_slice();
         match self {
             Self::PUT { key, val } => {
-                buf.put_u8(b'p');
-                buf.put_i32(*key);
-                buf.put_i32(*val);
+                slc.put_u8(b'p');
+                slc.put_i32(*key);
+                slc.put_i32(*val);
+                writer.write_all(&buf)?;
             }
             Self::GET { key } => {
-                buf.put_u8(b'g');
-                buf.put_i32(*key);
+                slc.put_u8(b'g');
+                slc.put_i32(*key);
+                writer.write_all(&buf[..5])?;
             }
             Self::DELETE { key } => {
-                buf.put_u8(b'd');
-                buf.put_i32(*key);
+                slc.put_u8(b'd');
+                slc.put_i32(*key);
+                writer.write_all(&buf[..5])?;
             }
             Self::LOAD { file } => {
-                buf.put_u8(b'l');
+                slc.put_u8(b'l');
 
                 let file_size = metadata(file).unwrap().len();
                 let kv_pairs = file_size / 8;
 
-                buf.put_u64(kv_pairs);
-                fs::File::open(file).unwrap().read_to_end(buf).unwrap();
+                slc.put_u64(kv_pairs);
+                writer.write_all(&buf)?;
+                std::io::copy(&mut fs::File::open(file).unwrap(), writer)?;
             }
             Self::RANGE { min_key, max_key } => {
-                buf.put_u8(b'r');
-                buf.put_i32(*min_key);
-                buf.put_i32(*max_key);
+                slc.put_u8(b'r');
+                slc.put_i32(*min_key);
+                slc.put_i32(*max_key);
+                writer.write_all(&buf)?;
             }
             Self::STATS => {
-                buf.put_u8(b's');
+                slc.put_u8(b's');
+                writer.write_all(&buf[..1])?;
             }
         }
+        Ok(())
     }
 
     pub fn from_input(input: &str) -> Option<Self> {

@@ -1,6 +1,6 @@
 use core::str;
 use std::{
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, BufWriter, Write},
     net::TcpStream,
     process::Stdio,
     sync::OnceLock,
@@ -53,8 +53,8 @@ fn run_text_client() -> io::Result<()> {
     let port = ARGS.get().unwrap().port;
 
     if let Ok(stream) = TcpStream::connect(("127.0.0.1", port)) {
-        let mut write_half = stream;
-        let mut read_half = BufReader::new(write_half.try_clone()?);
+        let mut read_half = BufReader::new(stream.try_clone()?);
+        let mut write_half = BufWriter::new(stream);
 
         loop {
             // prompt
@@ -69,22 +69,7 @@ fn run_text_client() -> io::Result<()> {
             input_buf.pop(); // \n
             if let Some(command) = Command::from_input(&input_buf) {
                 // send
-                output_buf.clear();
-                command.serialize(&mut output_buf);
-                write_half.write_all(&output_buf)?;
-                output_buf.clear();
-
-                // recv
-                read_half.read_until(0x00, &mut output_buf)?;
-                if output_buf.is_empty() || !output_buf.ends_with(b"\0") {
-                    // connection was cut off
-                    println!(
-                        "Could not read response from server at 127.0.0.1:{}: Connection dropped",
-                        port
-                    );
-                    break;
-                }
-                output_buf.pop(); // \0
+                send_command(&mut write_half, &mut read_half, &command, &mut output_buf)?;
 
                 // print
                 println!("{}", unsafe { str::from_utf8_unchecked(&output_buf) });
@@ -148,8 +133,8 @@ fn run_gui_client(
     let port = ARGS.get().unwrap().port;
 
     if let Ok(stream) = TcpStream::connect(("127.0.0.1", port)) {
-        let mut write_half = stream;
-        let mut read_half = BufReader::new(write_half.try_clone()?);
+        let mut read_half = BufReader::new(stream.try_clone()?);
+        let mut write_half = BufWriter::new(stream);
 
         while let Some(cpo) = receiver.recv_sync() {
             match cpo {
@@ -160,14 +145,12 @@ fn run_gui_client(
                         .arg(num_puts.to_string())
                         .output();
 
-                    send_command(
-                        &mut write_half,
-                        &mut read_half,
-                        &Command::LOAD {
-                            file: "./0.dat".into(),
-                        },
-                        &mut output_buf,
-                    )?;
+                    let command = Command::LOAD {
+                        file: "./0.dat".into(),
+                    };
+
+                    println!("Sending command {command:?}");
+                    send_command(&mut write_half, &mut read_half, &command, &mut output_buf)?;
                 }
                 CommandPanelOutput::GenerateWorkload {
                     num_puts,
@@ -250,9 +233,8 @@ fn send_command<W: Write, R: BufRead>(
     output_buf: &mut Vec<u8>,
 ) -> io::Result<f32> {
     // send
-    output_buf.clear();
-    command.serialize(output_buf);
-    write.write_all(&output_buf)?;
+    command.serialize(write)?;
+    write.flush()?;
     output_buf.clear();
 
     let start = Instant::now();
