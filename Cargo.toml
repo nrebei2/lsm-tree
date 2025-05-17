@@ -9,3 +9,6 @@ fixedbitset = "0.5.7"
 tokio = { version = "1.23.0", features = ["full"] }
 tokio-util = { version = "0.7.14", features = ["rt"] }
 chrono = "0.4.40"
+hdrhistogram = "7.5.4"
+serde_json = "1.0.140"
+serde = { version = "1.0", features = ["derive"] }

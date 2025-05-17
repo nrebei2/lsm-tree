@@ -5,6 +5,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 
 use crate::database::Database;
+use crate::ClientStats;
 
 #[derive(Clone, Debug)]
 pub enum Command {
@@ -17,10 +18,10 @@ pub enum Command {
 }
 
 impl Command {
-    pub async fn execute(self, db: &Database, out: &mut String) {
+    pub async fn execute(self, db: &Database, out: &mut String, stats: &mut ClientStats) {
         match self {
             Self::GET { key } => {
-                if let Some(val) = db.get(key).await {
+                if let Some(val) = db.get(key, stats).await {
                     out.push_str(&val.to_string());
                 }
             }

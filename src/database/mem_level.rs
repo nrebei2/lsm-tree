@@ -51,7 +51,7 @@ impl MemLevel {
 
     pub fn get(&self, key: i32) -> GetResult {
         match self.data.get(&key).cloned() {
-            None => GetResult::NotFound,
+            None => GetResult::NotFound(false),
             Some(None) => GetResult::Deleted,
             Some(Some(val)) => GetResult::Value(val),
         }

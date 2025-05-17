@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::config::{LEVEL1_FILE_CAPACITY, MAX_FILE_SIZE_BYTES, SIZE_MULTIPLIER};
+use crate::{config::{LEVEL1_FILE_CAPACITY, MAX_FILE_SIZE_BYTES, SIZE_MULTIPLIER}, ClientStats};
 
 use super::{
     table::{Command, Table},
@@ -123,12 +123,12 @@ impl DiskLevel {
             }
         }) {
             Ok(idx) => &self.tables[idx],
-            _ => return GetResult::NotFound,
+            _ => return GetResult::NotFound(false),
         };
 
         // find block in table
         if !table.bloom.maybe_contains(key) {
-            return GetResult::NotFound;
+            return GetResult::NotFound(false);
         }
 
         let block_num = match table.index.binary_search_by(|&(min_key, max_key)| {
@@ -141,7 +141,7 @@ impl DiskLevel {
             }
         }) {
             Ok(idx) => idx,
-            _ => return GetResult::NotFound,
+            _ => return GetResult::NotFound(false),
         };
 
         // read block in table
@@ -159,6 +159,6 @@ impl DiskLevel {
             }
         }
 
-        GetResult::NotFound
+        GetResult::NotFound(true)
     }
 }

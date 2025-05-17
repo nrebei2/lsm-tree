@@ -13,6 +13,7 @@ use table::{BlockMut, Command, Table, TableBuilder};
 use tokio::sync::RwLock;
 
 use crate::config::{MAX_FILE_SIZE_BYTES, MEM_CAPACITY, NUM_LEVELS};
+use crate::ClientStats;
 
 pub mod bloom;
 pub mod disk_level;
@@ -21,10 +22,8 @@ pub mod merge_iter;
 pub mod once_done;
 pub mod table;
 
-/// TODO: explain how I compact levels
-
 pub enum GetResult {
-    NotFound,
+    NotFound(bool),
     Deleted,
     Value(i32),
 }
@@ -115,21 +114,35 @@ impl Database {
         }
     }
 
-    pub async fn get(&self, key: i32) -> Option<i32> {
+    pub async fn get(&self, key: i32, stats: &mut ClientStats) -> Option<i32> {
         match self.memory.read().await.get(key) {
             GetResult::Deleted => return None,
             GetResult::Value(val) => return Some(val),
-            GetResult::NotFound => {}
+            GetResult::NotFound(_) => {}
         };
 
+        let mut total_block_reads = 0;
         for i in 0..NUM_LEVELS {
             match self.disk[i].read().await.get(key) {
-                GetResult::Deleted => return None,
-                GetResult::Value(val) => return Some(val),
-                GetResult::NotFound => {}
+                GetResult::Deleted => {
+                    total_block_reads += 1;
+                    stats.record_blocks_read(total_block_reads);
+                    return None
+                },
+                GetResult::Value(val) => {
+                    total_block_reads += 1;
+                    stats.record_blocks_read(total_block_reads);
+                    return Some(val)
+                },
+                GetResult::NotFound(read_block) => {
+                    if read_block {
+                        total_block_reads += 1;
+                    }
+                }
             };
         }
 
+        stats.record_blocks_read(total_block_reads);
         None
     }
 
