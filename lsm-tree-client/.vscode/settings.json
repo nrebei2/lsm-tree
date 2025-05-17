@@ -1,0 +1,17 @@
+{
+    "files.associations": {
+        "math.h": "c",
+        "string.h": "c",
+        "stat.h": "c",
+        "limits": "c",
+        "optional": "c",
+        "ratio": "c",
+        "tuple": "c",
+        "__bit_reference": "c",
+        "__node_handle": "c",
+        "bitset": "c",
+        "deque": "c",
+        "locale": "c",
+        "vector": "c"
+    }
+}
