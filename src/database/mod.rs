@@ -227,6 +227,8 @@ impl Database {
         let mut tally: HashMap<i32, bool> = HashMap::new();
         let mut level_counts = [0_usize; NUM_LEVELS + 1];
 
+        // writer.
+
         writer.push_str("\n---------------- Dump ----------------\n");
 
         let mem = self.memory.read().await;

@@ -5,6 +5,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
+use crate::connection::Connection;
 use crate::database::Database;
 use crate::ClientStats;
 
@@ -19,43 +20,34 @@ pub enum Command {
 }
 
 impl Command {
-    pub async fn execute<R: AsyncBufReadExt + Unpin, W: AsyncWrite + Unpin>(
-        self,
-        db: &Database,
-        stats: &mut ClientStats,
-        reader: &mut R,
-        writer: &mut W
-    ) {
+    pub async fn execute(self, connection: &mut Connection) {
         match self {
             Self::GET { key } => {
-                if let Some(val) = db.get(key, stats).await {
-                    writer.write_all(val.to_string().as_bytes());
+                if let Some(val) = connection.db.get(key, &mut connection.stats).await {
+                    connection.write_fmt(format_args!("{}", val)).await;
                 }
             }
             Self::DELETE { key } => {
-                db.delete(key).await;
-                writer.write_all(b"OK");
+                connection.db.delete(key).await;
+                connection.writer.write_all(b"OK").await;
             }
             Self::PUT { key, val } => {
-                db.insert(key, val).await;
-                writer.write_all(b"OK");
+                connection.db.insert(key, val).await;
+                connection.writer.write_all(b"OK").await;
             }
             Self::LOAD { kv_pairs } => {
-                let _ = db.load(kv_pairs, reader).await;
-                writer.write_all(b"OK");
+                let _ = connection.db.load(kv_pairs, &mut connection.reader).await;
+                connection.writer.write_all(b"OK").await;
             }
             Self::RANGE { min_key, max_key } => {
-                let buf = String::new();
-                if let Some(iter) = db.range(min_key, max_key - 1, stats).await {
+                if let Some(iter) = connection.db.range(min_key, max_key - 1, &mut connection.stats).await {
                     for (key, val) in iter {
-                        write!(buf, "{key}:{} ", val).unwrap();
-                        writer.write_all(buf.as_bytes());
-                        buf.clear();
+                        connection.write_fmt(format_args!("{}:{} ", key, val)).await;
                     }
                 }
             }
             Self::STATS => {
-                db.write_stats(writer).await;
+                connection.db.write_stats(&mut connection.writer).await;
             }
         }
     }

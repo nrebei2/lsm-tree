@@ -5,27 +5,28 @@ use hdrhistogram::Histogram;
 pub struct ClientStats {
     start_time: Option<String>,
     addr: SocketAddr,
-    database_size: usize,
+    database_size: Option<usize>,
     latencies_ns: Histogram<u64>, // per request
     blocks_read: Histogram<u64>,  // per request
     num_requests: u32,
 }
 
 impl ClientStats {
-    pub fn new(addr: SocketAddr, database_size: usize) -> Self {
+    pub fn new(addr: SocketAddr) -> Self {
         Self {
             start_time: None,
             addr,
-            database_size,
+            database_size: None,
             latencies_ns: Histogram::new(3).unwrap(),
             blocks_read: Histogram::new(3).unwrap(),
             num_requests: 0,
         }
     }
 
-    pub fn set_start_time(&mut self) {
+    pub fn begin(&mut self, database_size: usize) {
         if self.start_time.is_none() {
             self.start_time = Some(Local::now().format("%H:%M:%S%.6f").to_string());
+            self.database_size = Some(database_size);
         }
     }
 
@@ -82,7 +83,7 @@ impl ClientStats {
             latencies_ns: Percentiles::from_histogram(&self.latencies_ns),
             blocks_read: Percentiles::from_histogram(&self.blocks_read),
             num_requests: self.num_requests,
-            database_size: self.database_size,
+            database_size: self.database_size.unwrap_or_default(),
         };
 
         if serde_json::to_writer_pretty(file, &stats).is_err() {

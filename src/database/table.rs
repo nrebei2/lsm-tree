@@ -5,7 +5,7 @@ use super::once_done::OnceDoneTrait;
 use bytes::{Buf, BufMut, BytesMut};
 use std::cmp::Ordering;
 use std::fmt::Debug;
-use std::os::unix::fs::FileExt;
+// use std::os::unix::fs::FileExt;
 use std::{
     fs::{self, File},
     io::{Cursor, Write},
@@ -365,25 +365,26 @@ impl TableView {
     }
 
     pub fn get_block_at(&mut self, index: usize) -> Option<&BlockView> {
-        let bytes_read = self
-            .file
-            .read_at(
-                self.block_buf.as_mut_slice(),
-                (index * BLOCK_SIZE_BYTES) as u64,
-            )
-            .unwrap();
+        todo!()
+        // let bytes_read = self
+        //     .file
+        //     .read_at(
+        //         self.block_buf.as_mut_slice(),
+        //         (index * BLOCK_SIZE_BYTES) as u64,
+        //     )
+        //     .unwrap();
 
-        if bytes_read == 0 {
-            return None;
-        }
+        // if bytes_read == 0 {
+        //     return None;
+        // }
 
-        if bytes_read < BLOCK_SIZE_BYTES {
-            // this must be the last page
-            // sentinel of 0xFF
-            self.block_buf.as_mut_slice()[bytes_read] = 0xFF;
-        }
+        // if bytes_read < BLOCK_SIZE_BYTES {
+        //     // this must be the last page
+        //     // sentinel of 0xFF
+        //     self.block_buf.as_mut_slice()[bytes_read] = 0xFF;
+        // }
 
-        Some(&self.block_buf)
+        // Some(&self.block_buf)
     }
 
     pub fn delete_file(&self) {

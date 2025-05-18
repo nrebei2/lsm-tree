@@ -1,13 +1,12 @@
 mod database;
-use std::{net::SocketAddr, sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use client_stats::ClientStats;
-use command::read_command;
 use config::Config;
+use connection::Connection;
 use database::Database;
 use tokio::{
-    io::{AsyncWriteExt, BufReader, BufWriter},
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     signal,
 };
 use tokio_util::sync::CancellationToken;
@@ -16,6 +15,7 @@ use tokio_util::task::TaskTracker;
 mod client_stats;
 mod command;
 mod config;
+mod connection;
 
 #[tokio::main]
 async fn main() {
@@ -51,15 +51,17 @@ async fn main() {
             accept_result = listener.accept() => {
                 let (stream, client) = accept_result.unwrap();
                 let db_clone = db.clone();
-                let cloned_token = token.clone();
+                let cloned_token = token.clone(); 
+
+                let mut connnection = Connection::new(stream, client, cloned_token, db_clone);
 
                 // Creates a new task that handles the connection
                 // Because we are spawning a new task
                 // Tokio will make each connection concurrent
                 tracker.spawn(async move {
                     println!("New connection with {:?}", client);
-                    let stats = handle_connection(stream, client, db_clone, cloned_token).await;
-                    stats.save_to_file();
+                    connnection.handle().await;
+                    connnection.stats.save_to_file();
                     println!("Closed connection with {:?}", client);
                 });
             }
@@ -78,53 +80,3 @@ async fn main() {
     let db: Database = unsafe { Arc::try_unwrap(db).unwrap_unchecked() };
     db.cleanup();
 }
-
-struct Connection {
-    
-}
-
-async fn handle_connection(
-    stream: TcpStream,
-    addr: SocketAddr,
-    db: Arc<Database>,
-    cancel_token: CancellationToken,
-) -> ClientStats {
-    let (read, write) = stream.into_split();
-    let mut buf_read = BufReader::new(read);
-    let mut buf_write = BufWriter::new(write);
-
-
-    let mut stats = ClientStats::new(addr, db.size_bytes().await);
-
-    // repeatedly reads incoming commands from client
-    // execute them
-    // then writes back the response to client
-    loop {
-        tokio::select! {
-            read_res = read_command(&mut buf_read) => {
-                let command = if let Ok(command) = read_res {
-                    command
-                } else {
-                    break;
-                };
-
-                stats.set_start_time();
-
-                // println!("Received command {:?} from {:?}, executing...", command, addr);
-                let start = Instant::now();
-                command.execute(&db, &mut stats, &mut buf_read, &mut buf_write).await;
-                stats.record_latency(start.elapsed().as_nanos() as u64);
-
-                // delimiter of 0 so the client knows when the response finishes
-                buf_write.write_u8(0x00).await.unwrap();
-                buf_write.flush().await.unwrap();
-            }
-            _ = cancel_token.cancelled() => {
-                break;
-            }
-        }
-    }
-
-    stats
-}
-
