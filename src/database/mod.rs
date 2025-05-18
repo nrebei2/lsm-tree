@@ -1,5 +1,4 @@
 use std::cell::Cell;
-use std::fmt::Write;
 use std::{
     cmp::Ordering,
     collections::HashMap,
@@ -11,7 +10,7 @@ use disk_level::DiskLevel;
 use mem_level::MemLevel;
 use merge_iter::merge_sorted_commands;
 use table::{BlockMut, Command, Table, TableBuilder};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWrite};
 use tokio::io::{self, AsyncBufReadExt};
 use tokio::sync::RwLock;
 
@@ -224,11 +223,11 @@ impl Database {
         }
     }
 
-    pub async fn write_stats(&self, to: &mut String) {
+    pub async fn write_stats<W: AsyncWrite + Unpin>(&self, writer: &mut W) {
         let mut tally: HashMap<i32, bool> = HashMap::new();
         let mut level_counts = [0_usize; NUM_LEVELS + 1];
 
-        to.push_str("\n---------------- Dump ----------------\n");
+        writer.push_str("\n---------------- Dump ----------------\n");
 
         let mem = self.memory.read().await;
         for (&key, &val) in mem.iter() {

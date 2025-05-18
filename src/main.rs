@@ -6,7 +6,7 @@ use command::read_command;
 use config::Config;
 use database::Database;
 use tokio::{
-    io::{AsyncWriteExt, BufReader},
+    io::{AsyncWriteExt, BufReader, BufWriter},
     net::{TcpListener, TcpStream},
     signal,
 };
@@ -79,16 +79,20 @@ async fn main() {
     db.cleanup();
 }
 
+struct Connection {
+    
+}
+
 async fn handle_connection(
     stream: TcpStream,
     addr: SocketAddr,
     db: Arc<Database>,
     cancel_token: CancellationToken,
 ) -> ClientStats {
-    let (read, mut write) = stream.into_split();
+    let (read, write) = stream.into_split();
     let mut buf_read = BufReader::new(read);
+    let mut buf_write = BufWriter::new(write);
 
-    let mut out_buf = String::new();
 
     let mut stats = ClientStats::new(addr, db.size_bytes().await);
 
@@ -108,17 +112,12 @@ async fn handle_connection(
 
                 // println!("Received command {:?} from {:?}, executing...", command, addr);
                 let start = Instant::now();
-                command.execute(&db, &mut stats, &mut buf_read, &mut out_buf).await;
+                command.execute(&db, &mut stats, &mut buf_read, &mut buf_write).await;
                 stats.record_latency(start.elapsed().as_nanos() as u64);
 
-
-                let mut bytes = out_buf.into_bytes();
                 // delimiter of 0 so the client knows when the response finishes
-                bytes.push(0x00);
-                write.write_all(&bytes).await.unwrap();
-
-                bytes.clear();
-                out_buf = unsafe { String::from_utf8_unchecked(bytes) };
+                buf_write.write_u8(0x00).await.unwrap();
+                buf_write.flush().await.unwrap();
             }
             _ = cancel_token.cancelled() => {
                 break;
@@ -128,3 +127,4 @@ async fn handle_connection(
 
     stats
 }
+
