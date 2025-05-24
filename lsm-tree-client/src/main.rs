@@ -1,7 +1,7 @@
 use core::str;
 use std::{
     io::{self, BufRead, BufReader, BufWriter, Write},
-    net::TcpStream,
+    net::{IpAddr, TcpStream},
     process::Stdio,
     sync::OnceLock,
     time::Instant,
@@ -28,13 +28,16 @@ struct Args {
 
     #[arg(long)]
     cli: bool,
+
+    #[arg(short, long, default_value = "127.0.0.1")]
+    hostname: IpAddr,
 }
 
 fn main() {
     let _ = ARGS.set(Args::parse());
 
     // Connects to the server
-    // Repeatedly takes in commands following the CS265 DSL from the user
+    // Repeatedly takes in commands from the user
     // writes command to server
     // reads back the response from the server
 
@@ -50,15 +53,15 @@ fn run_text_client() -> io::Result<()> {
     let mut input_buf = String::new();
     let mut output_buf = Vec::new();
 
-    let port = ARGS.get().unwrap().port;
+    let args = ARGS.get().unwrap();
 
-    if let Ok(stream) = TcpStream::connect(("127.0.0.1", port)) {
+    if let Ok(stream) = TcpStream::connect((args.hostname, args.port)) {
         let mut read_half = BufReader::new(stream.try_clone()?);
         let mut write_half = BufWriter::new(stream);
 
         loop {
             // prompt
-            print!("127.0.0.1:{}> ", port);
+            print!("{}:{}> ", args.hostname, args.port);
             std::io::stdout().flush()?;
 
             // read
@@ -81,8 +84,8 @@ fn run_text_client() -> io::Result<()> {
         }
     } else {
         println!(
-            "Could not connect to server at 127.0.0.1:{}: Connection refused",
-            port
+            "Could not connect to server at {}:{}: Connection refused",
+            args.hostname, args.port
         );
     }
 
@@ -130,9 +133,9 @@ fn run_gui_client(
     let mut output_buf = Vec::new();
     let mut duration_buf = DurationBuffer::<1000>::new();
 
-    let port = ARGS.get().unwrap().port;
+    let args = ARGS.get().unwrap();
 
-    if let Ok(stream) = TcpStream::connect(("127.0.0.1", port)) {
+    if let Ok(stream) = TcpStream::connect((args.hostname, args.port)) {
         let mut read_half = BufReader::new(stream.try_clone()?);
         let mut write_half = BufWriter::new(stream);
 
@@ -194,7 +197,7 @@ fn run_gui_client(
                     }
                 }
                 CommandPanelOutput::RawCommand { command } => {
-                    println!("127.0.0.1:{}> {}", port, command);
+                    println!("{}:{}> {}", args.hostname, args.port, command);
                     if let Some(command) = Command::from_input(&command) {
                         if let Some(command_type) = command.to_type() {
                             duration_buf.push(
@@ -218,8 +221,8 @@ fn run_gui_client(
         }
     } else {
         println!(
-            "Could not connect to server at 127.0.0.1:{}: Connection refused",
-            port
+            "Could not connect to server at {}:{}: Connection refused",
+            args.hostname, args.port
         );
     }
 

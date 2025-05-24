@@ -2,94 +2,24 @@ use crate::config::{BLOCK_SIZE_BYTES, BLOOM_CAPACITY, MAX_FILE_SIZE_BLOCKS};
 
 use super::bloom::Bloom;
 use super::once_done::OnceDoneTrait;
-use bytes::{Buf, BufMut, BytesMut};
+use block::*;
 use std::cmp::Ordering;
 use std::fmt::Debug;
-// use std::os::unix::fs::FileExt;
+
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
+
+#[cfg(unix)]
+use std::os::unix::fs::FileExt;
+
 use std::{
     fs::{self, File},
-    io::{Cursor, Write},
+    io::Write,
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
-pub struct BlockMut {
-    pub commands: BytesMut,
-    pub keys: Vec<i32>,
-}
-
-impl BlockMut {
-    pub fn new() -> Self {
-        Self {
-            commands: BytesMut::with_capacity(BLOCK_SIZE_BYTES),
-            keys: Vec::with_capacity(BLOCK_SIZE_BYTES >> 2),
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.commands.clear();
-        self.keys.clear();
-    }
-
-    pub fn push_command(&mut self, command: Command) -> bool {
-        let bytes_to_write = match command {
-            Command::Delete(..) => 5,
-            Command::Put(..) => 9,
-        };
-
-        if self.commands.len() + bytes_to_write > self.commands.capacity() {
-            let remaining_space = self.commands.capacity() - self.commands.len();
-
-            // Pad the remaining space with 0xFF
-            for _ in 0..remaining_space {
-                self.commands.put_u8(0xFF);
-            }
-
-            return false;
-        }
-
-        match command {
-            Command::Delete(key) => {
-                self.commands.put_u8(1);
-                self.commands.put_i32(key);
-                self.keys.push(key);
-            }
-            Command::Put(key, val) => {
-                self.commands.put_u8(0);
-                self.commands.put_i32(key);
-                self.commands.put_i32(val);
-                self.keys.push(key);
-            }
-        }
-        true
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Command {
-    Delete(i32),
-    Put(i32, i32),
-}
-
-impl Command {
-    pub fn key(&self) -> i32 {
-        match self {
-            &Self::Delete(key) => key,
-            &Self::Put(key, ..) => key,
-        }
-    }
-
-    pub fn value(&self) -> Option<i32> {
-        match self {
-            Self::Delete(_) => None,
-            &Self::Put(_, val) => Some(val),
-        }
-    }
-}
+pub mod block;
 
 pub struct TableBuilder {
     pub directory: PathBuf,
@@ -139,7 +69,7 @@ impl TableBuilder {
         }
     }
 
-    pub fn full(&self) -> bool {
+    pub fn is_full(&self) -> bool {
         self.index.len() >= MAX_FILE_SIZE_BLOCKS
     }
 
@@ -193,20 +123,14 @@ impl Table {
         start_at_block: usize,
         delete_on_finish: bool,
     ) -> impl Iterator<Item = Command> {
-        self.view_from(start_at_block)
-            .once_done(move |v| {
-                if delete_on_finish {
-                    v.delete_file()
-                }
-            })
-            .flat_map(|b| unsafe { b.as_ref().unwrap().iter() })
+        self.commands_ext(start_at_block, delete_on_finish, || {})
     }
 
     pub fn commands_ext<T: Fn()>(
         &self,
         start_at_block: usize,
         delete_on_finish: bool,
-        mut on_block: T,
+        on_block: T,
     ) -> impl Iterator<Item = Command> {
         self.view_from(start_at_block)
             .once_done(move |v| {
@@ -292,59 +216,6 @@ impl Table {
     }
 }
 
-pub struct BlockView {
-    buf: [u8; BLOCK_SIZE_BYTES],
-}
-
-impl BlockView {
-    pub fn new() -> Self {
-        Self {
-            buf: [0xFF; BLOCK_SIZE_BYTES],
-        }
-    }
-
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf
-    }
-
-    pub fn iter(&self) -> BlockViewIter {
-        BlockViewIter {
-            commands: Cursor::new(&self.buf[..]),
-        }
-    }
-}
-
-pub struct BlockViewIter<'a> {
-    commands: Cursor<&'a [u8]>,
-}
-
-impl<'a> Iterator for BlockViewIter<'a> {
-    type Item = Command;
-
-    fn next(&mut self) -> Option<Command> {
-        if !self.commands.has_remaining() {
-            return None;
-        }
-
-        match self.commands.get_u8() {
-            0 => {
-                let key = self.commands.get_i32();
-                let val = self.commands.get_i32();
-                Some(Command::Put(key, val))
-            }
-            1 => {
-                let key = self.commands.get_i32();
-                Some(Command::Delete(key))
-            }
-            0xFF => {
-                // Fin
-                None
-            }
-            _ => panic!("INVALID TAG!!!!!!!!!!"),
-        }
-    }
-}
-
 pub struct TableView {
     file_path: PathBuf,
     file: File,
@@ -364,27 +235,40 @@ impl TableView {
         }
     }
 
+    #[cfg(windows)]
+    fn read_block(&mut self, index: usize) -> usize {
+        self.file
+            .seek_read(
+                self.block_buf.as_mut_slice(),
+                (index * BLOCK_SIZE_BYTES) as u64,
+            )
+            .unwrap()
+    }
+
+    #[cfg(unix)]
+    fn read_block(&mut self, index: usize) -> usize {
+        self.file
+            .read_at(
+                self.block_buf.as_mut_slice(),
+                (index * BLOCK_SIZE_BYTES) as u64,
+            )
+            .unwrap()
+    }
+
     pub fn get_block_at(&mut self, index: usize) -> Option<&BlockView> {
-        todo!()
-        // let bytes_read = self
-        //     .file
-        //     .read_at(
-        //         self.block_buf.as_mut_slice(),
-        //         (index * BLOCK_SIZE_BYTES) as u64,
-        //     )
-        //     .unwrap();
+        let bytes_read = self.read_block(index);
 
-        // if bytes_read == 0 {
-        //     return None;
-        // }
+        if bytes_read == 0 {
+            return None;
+        }
 
-        // if bytes_read < BLOCK_SIZE_BYTES {
-        //     // this must be the last page
-        //     // sentinel of 0xFF
-        //     self.block_buf.as_mut_slice()[bytes_read] = 0xFF;
-        // }
+        if bytes_read < BLOCK_SIZE_BYTES {
+            // this must be the last page
+            // sentinel of 0xFF
+            self.block_buf.as_mut_slice()[bytes_read] = 0xFF;
+        }
 
-        // Some(&self.block_buf)
+        Some(&self.block_buf)
     }
 
     pub fn delete_file(&self) {

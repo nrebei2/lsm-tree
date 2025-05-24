@@ -9,12 +9,14 @@ use deepsize::DeepSizeOf;
 use disk_level::DiskLevel;
 use mem_level::MemLevel;
 use merge_iter::merge_sorted_commands;
-use table::{BlockMut, Command, Table, TableBuilder};
-use tokio::io::{AsyncReadExt, AsyncWrite};
+use table::block::{BlockMut, Command};
+use table::{Table, TableBuilder};
+use tokio::io::AsyncReadExt;
 use tokio::io::{self, AsyncBufReadExt};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, RwLockWriteGuard};
 
 use crate::config::{MAX_FILE_SIZE_BYTES, MEM_CAPACITY, NUM_LEVELS};
+use crate::connection::Connection;
 use crate::ClientStats;
 
 pub mod bloom;
@@ -54,11 +56,9 @@ impl Database {
         let mut mem_write = self.memory.write().await;
         mem_write.insert(key, value);
 
-        // keep holding the write guard so
         if mem_write.len() >= MEM_CAPACITY as usize {
             let old_mem = mem_write.clear();
-            drop(mem_write);
-            self.handle_overflow(old_mem).await;
+            self.handle_overflow(old_mem, mem_write).await;
         }
     }
 
@@ -67,7 +67,6 @@ impl Database {
         kv_pairs: u64,
         reader: &mut T,
     ) -> io::Result<()> {
-        // a bit better than multiple calls to insert as locks are kept to a minimum
         let mut mem_write = self.memory.write().await;
 
         for _ in 0..kv_pairs {
@@ -78,8 +77,7 @@ impl Database {
 
             if mem_write.len() >= MEM_CAPACITY as usize {
                 let old_mem = mem_write.clear();
-                drop(mem_write);
-                self.handle_overflow(old_mem).await;
+                self.handle_overflow(old_mem, mem_write).await;
                 mem_write = self.memory.write().await;
             }
         }
@@ -91,15 +89,19 @@ impl Database {
         mem_write.delete(key);
         if mem_write.len() >= MEM_CAPACITY as usize {
             let old_mem = mem_write.clear();
-            drop(mem_write);
-            self.handle_overflow(old_mem).await;
+            self.handle_overflow(old_mem, mem_write).await;
         }
     }
 
-    async fn handle_overflow(&self, mem: MemLevel) {
+    async fn handle_overflow(
+        &self,
+        mem: MemLevel,
+        mem_write_guard: RwLockWriteGuard<'_, MemLevel>,
+    ) {
         let l0_table = mem.write_to_table(self.data_directory.join("level0").as_path());
 
         let mut cur = self.disk[0].write().await;
+        drop(mem_write_guard);
         merge(&mut vec![l0_table], &mut cur);
 
         for i in 0..(NUM_LEVELS - 1) {
@@ -177,7 +179,7 @@ impl Database {
         let block_reads = Cell::new(0_u64);
         for i in 0..NUM_LEVELS {
             if !cur_level.tables.is_empty() {
-                if let Some(locate_min) = cur_level.locate_nearest(min_key) {
+                if let Some(locate_min) = cur_level.locate_start_block(min_key) {
                     for command in cur_level.tables[locate_min.table_index]
                         .commands_ext(locate_min.block_index, false, || unsafe {
                             *block_reads.as_ptr() += 1;
@@ -223,24 +225,27 @@ impl Database {
         }
     }
 
-    pub async fn write_stats<W: AsyncWrite + Unpin>(&self, writer: &mut W) {
+    pub async fn write_stats(&self, connection: &mut Connection) -> io::Result<()> {
         let mut tally: HashMap<i32, bool> = HashMap::new();
         let mut level_counts = [0_usize; NUM_LEVELS + 1];
 
-        // writer.
-
-        writer.push_str("\n---------------- Dump ----------------\n");
+        connection
+            .write_str("\n---------------- Dump ----------------\n")
+            .await?;
 
         let mem = self.memory.read().await;
         for (&key, &val) in mem.iter() {
-            if let Some(value) = val {
-                write!(to, "{key}:{value}:L0 ").unwrap();
+            if let Some(val) = val {
+                connection.write_int(key).await?;
+                connection.write_str(":").await?;
+                connection.write_int(val).await?;
+                connection.write_str(":L0 ").await?;
                 level_counts[0] += 1;
             }
             tally.insert(key, val.is_some());
         }
 
-        to.push_str("\n\n");
+        connection.write_str("\n\n").await?;
 
         let mut cur_level = self.disk[0].read().await;
         drop(mem);
@@ -249,14 +254,19 @@ impl Database {
             if !cur_level.tables.is_empty() {
                 for command in cur_level.tables.iter().flat_map(|t| t.commands(0, false)) {
                     if let Command::Put(key, val) = command {
-                        write!(to, "{key}:{val}:L{} ", i + 1).unwrap();
+                        connection.write_int(key).await?;
+                        connection.write_str(":").await?;
+                        connection.write_int(val).await?;
+                        connection.write_str(":L").await?;
+                        connection.write_int((i + 1) as i32).await?;
+                        connection.write_str(" ").await?;
                         level_counts[i + 1] += 1;
                     }
                     tally
                         .entry(command.key())
                         .or_insert(command.value().is_some());
                 }
-                to.push_str("\n\n");
+                connection.write_str("\n\n").await?;
             }
 
             if let Some(next) = self.disk.get(i + 1) {
@@ -265,20 +275,27 @@ impl Database {
             }
         }
 
-        to.push_str("\n---------------- TLDR ----------------\n");
+        connection
+            .write_str("\n---------------- TLDR ----------------\n")
+            .await?;
 
-        writeln!(
-            to,
-            "Logical Pairs: {}",
-            tally.into_values().filter(|v| *v).count()
-        )
-        .unwrap();
+        connection.write_str("Logical Pairs: ").await?;
+        connection
+            .write_int(tally.into_values().filter(|v| *v).count() as i32)
+            .await?;
+        connection.write_str("\n").await?;
         for (idx, counts) in level_counts.into_iter().enumerate() {
             if counts == 0 {
                 continue;
             }
-            writeln!(to, "LVL{idx}: {counts}").unwrap();
+            connection.write_str("LVL").await?;
+            connection.write_int(idx as i32).await?;
+            connection.write_str(": ").await?;
+            connection.write_int(counts as i32).await?;
+            connection.write_str("\n").await?;
         }
+
+        Ok(())
     }
 
     pub async fn size_bytes(&self) -> usize {
@@ -309,7 +326,7 @@ fn build_tables<I: Iterator<Item = Command>>(mut iter: I, to_dir: &Path) -> Vec<
         if !block.push_command(command) {
             tb.insert_block(&block);
 
-            if tb.full() {
+            if tb.is_full() {
                 let new_table = tb.build();
                 tb = TableBuilder::new(to_dir);
                 new_tables.push(new_table);

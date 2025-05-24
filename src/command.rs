@@ -1,13 +1,10 @@
-use std::fmt::Write;
 use std::i32;
 use tokio::io;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::connection::Connection;
 use crate::database::Database;
-use crate::ClientStats;
 
 #[derive(Clone, Debug)]
 pub enum Command {
@@ -20,36 +17,40 @@ pub enum Command {
 }
 
 impl Command {
-    pub async fn execute(self, connection: &mut Connection) {
+    pub async fn execute(self, connection: &mut Connection, db: &Database) -> io::Result<()> {
         match self {
             Self::GET { key } => {
-                if let Some(val) = connection.db.get(key, &mut connection.stats).await {
-                    connection.write_fmt(format_args!("{}", val)).await;
+                if let Some(val) = db.get(key, &mut connection.stats).await {
+                    connection.write_int(val).await?;
                 }
             }
             Self::DELETE { key } => {
-                connection.db.delete(key).await;
-                connection.writer.write_all(b"OK").await;
+                db.delete(key).await;
+                connection.write_str("OK").await?;
             }
             Self::PUT { key, val } => {
-                connection.db.insert(key, val).await;
-                connection.writer.write_all(b"OK").await;
+                db.insert(key, val).await;
+                connection.write_str("OK").await?;
             }
             Self::LOAD { kv_pairs } => {
-                let _ = connection.db.load(kv_pairs, &mut connection.reader).await;
-                connection.writer.write_all(b"OK").await;
+                db.load(kv_pairs, &mut connection.reader).await?;
+                connection.write_str("OK").await?;
             }
             Self::RANGE { min_key, max_key } => {
-                if let Some(iter) = connection.db.range(min_key, max_key - 1, &mut connection.stats).await {
+                if let Some(iter) = db.range(min_key, max_key - 1, &mut connection.stats).await {
                     for (key, val) in iter {
-                        connection.write_fmt(format_args!("{}:{} ", key, val)).await;
+                        connection.write_int(key).await?;
+                        connection.write_str(":").await?;
+                        connection.write_int(val).await?;
+                        connection.write_str(" ").await?;
                     }
                 }
             }
             Self::STATS => {
-                connection.db.write_stats(&mut connection.writer).await;
+                db.write_stats(connection).await?;
             }
         }
+        Ok(())
     }
 }
 

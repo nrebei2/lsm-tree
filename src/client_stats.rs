@@ -2,10 +2,11 @@ use std::net::SocketAddr;
 
 use chrono::Local;
 use hdrhistogram::Histogram;
+
 pub struct ClientStats {
-    start_time: Option<String>,
+    start_time: Option<String>, // time of first request
     addr: SocketAddr,
-    database_size: Option<usize>,
+    database_size: Option<usize>, // at start
     latencies_ns: Histogram<u64>, // per request
     blocks_read: Histogram<u64>,  // per request
     num_requests: u32,

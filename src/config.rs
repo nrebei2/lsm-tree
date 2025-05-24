@@ -15,8 +15,6 @@ pub const MAX_FILE_SIZE_BLOCKS: usize = MAX_FILE_SIZE_BYTES / BLOCK_SIZE_BYTES;
 
 // Worst case (all puts, each taking 9 bytes) upper bound on number of entries in the memory level that can serialize into a single file
 pub const MEM_CAPACITY: u32 = (MAX_FILE_SIZE_BLOCKS * BLOCK_SIZE_BYTES / 9) as u32;
-// pub const MEM_CAPACITY: u32 = 10;
-
 pub const BLOOM_CAPACITY: usize = 1 << 16;
 
 const DEFAULT_DATABASE_DIRECTORY: &'static str = "/Users/noahr/dev/rust/lsm-tree/database";

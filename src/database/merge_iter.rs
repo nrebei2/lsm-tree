@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, iter::Peekable};
 
-use super::table::Command;
+use super::table::block::Command;
 
 pub struct MergeCommands<I1, I2>
 where

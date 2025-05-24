@@ -5,10 +5,7 @@ use client_stats::ClientStats;
 use config::Config;
 use connection::Connection;
 use database::Database;
-use tokio::{
-    net::TcpListener,
-    signal,
-};
+use tokio::{net::TcpListener, signal};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -26,8 +23,8 @@ async fn main() {
     let db = Arc::new(Database::new(config.data_dir));
 
     // Starts up the server on localhost
-    let listener = TcpListener::bind(("127.0.0.1", config.port)).await.unwrap();
-    println!("Starting server on 127.0.0.1:{}!", config.port);
+    let listener = TcpListener::bind(("0.0.0.0", config.port)).await.unwrap();
+    println!("Starting server on 0.0.0.0:{}!", config.port);
 
     let token = CancellationToken::new();
     let cloned_token = token.clone();
@@ -51,18 +48,16 @@ async fn main() {
             accept_result = listener.accept() => {
                 let (stream, client) = accept_result.unwrap();
                 let db_clone = db.clone();
-                let cloned_token = token.clone(); 
+                let cloned_token = token.clone();
 
-                let mut connnection = Connection::new(stream, client, cloned_token, db_clone);
+                let mut connnection = Connection::new(stream, client, cloned_token);
 
-                // Creates a new task that handles the connection
-                // Because we are spawning a new task
                 // Tokio will make each connection concurrent
                 tracker.spawn(async move {
                     println!("New connection with {:?}", client);
-                    connnection.handle().await;
+                    let result = connnection.handle(db_clone).await;
                     connnection.stats.save_to_file();
-                    println!("Closed connection with {:?}", client);
+                    println!("Closed connection with {client:?}: {result:?}");
                 });
             }
             _ = token.cancelled() => {
