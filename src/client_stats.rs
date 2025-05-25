@@ -26,7 +26,7 @@ impl ClientStats {
 
     pub fn begin(&mut self, database_size: usize) {
         if self.start_time.is_none() {
-            self.start_time = Some(Local::now().format("%H:%M:%S%.6f").to_string());
+            self.start_time = Some(Local::now().format("%H__%M__%S%.6f").to_string());
             self.database_size = Some(database_size);
         }
     }
@@ -41,11 +41,12 @@ impl ClientStats {
     }
 
     pub fn save_to_file(self) {
-        let file = std::fs::File::create(format!(
-            "bench/client_{}.json",
-            self.start_time.clone().unwrap_or_default()
-        ))
-        .unwrap();
+        let name = format!(
+            "bench/client_{}_{}.json",
+            self.addr.port(),
+            self.start_time.as_deref().unwrap_or("empty")
+        );
+        let file = std::fs::File::create(name).unwrap();
 
         use serde::Serialize;
 
