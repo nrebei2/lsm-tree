@@ -29,7 +29,7 @@ struct Args {
     #[arg(long)]
     cli: bool,
 
-    #[arg(short, long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = "127.0.0.1")]
     hostname: IpAddr,
 }
 
@@ -44,7 +44,7 @@ fn main() {
     if ARGS.get().unwrap().cli {
         let _ = run_text_client();
     } else {
-        let app = RelmApp::new("relm4.lsm.client");
+        let app = RelmApp::new("relm4.lsm.client").with_args(vec![]);
         app.run::<App>(());
     }
 }
