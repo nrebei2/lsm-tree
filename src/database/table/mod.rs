@@ -159,7 +159,7 @@ impl Table {
     }
 
     pub fn file_name(&self) -> String {
-        format!("{}:{}", self.min_key, self.max_key)
+        format!("{}_{}", self.min_key, self.max_key)
     }
 
     pub fn rename(&mut self, to_dir: &Path) {
