@@ -79,7 +79,7 @@ impl TableBuilder {
 
     pub fn build(self) -> Table {
         let new_path = self.directory.join(format!(
-            "{}:{}",
+            "{}_{}",
             self.min_key.unwrap(),
             self.max_key.unwrap()
         ));
@@ -101,7 +101,7 @@ impl TableBuilder {
 #[derive(Debug)]
 pub struct Table {
     pub directory: PathBuf,
-    // file name = "{min_key}-{max_key}"
+    // file name = "{min_key}_{max_key}"
     pub min_key: i32,
     pub max_key: i32,
     pub file_size: u64,
@@ -173,7 +173,7 @@ impl Table {
     pub fn create_from_existing(file_path: &Path) -> Self {
         let file_name = file_path.file_name().unwrap().to_str().unwrap();
         let (min_key_str, max_key_str) = file_name
-            .split_once(':')
+            .split_once('_')
             .expect("File name was tampered with...");
 
         let min_key: i32 = min_key_str.parse().expect("File name was tampered with...");
